@@ -271,6 +271,9 @@ th.r,td.r{text-align:right}
 .chip-red{color:#F27281;background:var(--red-soft)}
 .chip-blue{color:var(--blue);background:rgba(91,143,214,.14)}
 .region-chip{font-size:10px;padding:2px 8px;white-space:nowrap}
+.lane-search-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.lane-search-row .searchbox{min-width:170px}
+.lane-search-arrow{color:var(--silver-faint);font-size:14px;flex-shrink:0}
 .email-btn{display:inline-block;padding:4px 11px;border-radius:6px;font-size:11px;font-weight:700;
   border:1px solid var(--line);background:var(--midnight-2);color:var(--gold-bright);text-decoration:none;
   white-space:nowrap;cursor:pointer;transition:border-color .15s}
@@ -533,6 +536,31 @@ tr.detail-row td{padding:0;border-bottom:1px solid rgba(46,46,51,.55)}
 
   <!-- ============ LANES ============ -->
   <section class="view" id="view-lanes">
+    <div class="grid kpis">
+      <div class="card kpi"><span class="eyebrow">Shipments</span>
+        <div class="kpi-val num" id="kShipL">—</div>
+        <div class="kpi-sub num" id="kShipAvgMoL" title="Total shipments ÷ number of calendar months in the current scope">—</div>
+        <span class="kpi-delta" id="kShipDL"></span>
+        <div class="kpi-spark"><canvas id="spShipL"></canvas></div></div>
+      <div class="card kpi"><span class="eyebrow">Customer Revenue</span>
+        <div class="kpi-val num" id="kRevL">—</div>
+        <div class="kpi-sub num" id="kRevAvgMoL" title="Total revenue ÷ number of calendar months in the current scope">—</div>
+        <span class="kpi-delta" id="kRevDL"></span>
+        <div class="kpi-spark"><canvas id="spRevL"></canvas></div></div>
+      <div class="card kpi"><span class="eyebrow">Total Margin $</span>
+        <div class="kpi-val-row"><div class="kpi-val num" id="kMarginFullL">—</div><span class="kpi-side num" id="kMarginFullPctL" title="Full (pre-corporate) margin as % of revenue">—</span></div>
+        <div class="kpi-sub num" id="kMarginFullAvgMoL" title="Total margin ÷ number of calendar months in the current scope">—</div>
+        <span class="kpi-delta" id="kMarginFullDL"></span>
+        <div class="kpi-spark"><canvas id="spMarginFullL"></canvas></div></div>
+      <div class="card kpi"><span class="eyebrow">Corporate Margin $</span>
+        <div class="kpi-val-row"><div class="kpi-val num" id="kMarginL">—</div><span class="kpi-side num" id="kMarginPctL" title="Corporate margin as % of revenue">—</span></div>
+        <div class="kpi-sub num" id="kMarginAvgMoL" title="Corporate margin ÷ number of calendar months in the current scope">—</div>
+        <span class="kpi-delta" id="kMarginDL"></span>
+        <div class="kpi-spark"><canvas id="spMarginL"></canvas></div></div>
+      <div class="card kpi"><span class="eyebrow">Corporate Margin by Group</span>
+        <div class="kpi-groups" id="kGroupMarginsL"></div></div>
+    </div>
+
     <div class="card">
       <div class="card-h">
         <div class="card-h-text">
@@ -581,7 +609,12 @@ tr.detail-row td{padding:0;border-bottom:1px solid rgba(46,46,51,.55)}
           <span class="eyebrow">Search all lanes</span>
           <span class="card-note">Sorted by margin/load, highest to lowest</span>
         </div>
-        <input class="searchbox" id="laneSearch" placeholder="Search lane, broker, customer, or region…">
+        <div class="lane-search-row">
+          <input class="searchbox" id="laneSearchOrigin" placeholder="Origin (city or state)…">
+          <span class="lane-search-arrow">→</span>
+          <input class="searchbox" id="laneSearchDest" placeholder="Destination (city or state)…">
+          <input class="searchbox" id="laneSearch" placeholder="Broker, customer, or region…">
+        </div>
         <button class="btn-export" onclick="exportRawRows(filteredRows(),'lanes-detail')">Export CSV</button>
       </div>
       <div class="table-scroll"><table id="tblAllLanes"><thead><tr>
@@ -1066,6 +1099,14 @@ function buildCarrierEmailMap(carrierEmailRows){
    appearing individually. Matched on first name (so "Mary Cox" matches
    "Mary") or the exact full name for non-person entries like TurvoBot.
    Add to these lists as needed. */
+/* Brokers on the Raw Data tab who belong to the Agent group. They keep their
+   own name (and color) everywhere brokers are shown, but roll up under
+   "Agent" for the Group filter, the 40% corporate-margin split, and the
+   no-market-data (Rate Diff / KPI / Benchmark) rule. 'Agent' itself is kept
+   so older rows still using the generic label behave the same way. */
+const AGENT_BROKERS = ['Agent','Scott Bernard','Sid Doyle'];
+const AGENT_BROKER_SET = new Set(AGENT_BROKERS.map(n=>n.toLowerCase()));
+function isAgentBroker(name){ return AGENT_BROKER_SET.has((name||'').trim().toLowerCase()); }
 const TFL_OTHER_FIRST_NAMES = ['megan','mary'];
 const TFL_OTHER_FULL_NAMES = ['turvobot'];
 function normalizeTflBroker(raw){
@@ -1114,7 +1155,7 @@ function buildDataFromSheetRows(rawRows, tflRawRows, regionMap){
     // regardless of what's actually in those cells (don't rely on the cells
     // being blank; a stray 0 in the sheet would otherwise get treated as a
     // real value, not "no data").
-    const isAgent = brokerName === 'Agent';
+    const isAgent = isAgentBroker(brokerName);
     const rateDiff = isAgent ? null : toNum(row['Rate Diff']);
     const kpi = isAgent ? null : toPercent(row['KPI']);
     const benchmark = isAgent ? null : toNum(row['Benchmark']);
@@ -1615,7 +1656,9 @@ const BROKER_COLORS = {
   'Michael Garrison': '#5B8FD6', // blue
   'Sandra Duhamel': '#D9A521',   // yellow/gold
   'Kade McDonald': '#A6A6AD',    // grey
-  'Agent': '#BA0F24',            // red
+  'Agent': '#BA0F24',            // red (legacy generic label)
+  'Scott Bernard': '#E8553D',    // coral red
+  'Sid Doyle': '#9B2D5B',        // wine
   // TFL reps
   'Arony Navarro': '#6FCF97',    // green
   'Brandon Hall': '#C77DFF',     // purple
@@ -1779,26 +1822,31 @@ function totals(rows){
 }
 
 /* ================= RENDER: OVERVIEW ================= */
-function renderOverview(){
+/* ================= KPI CARDS (shared by Overview + Lanes & Rates) ================= */
+/* Populates the five headline cards. `sfx` is appended to every element id
+   so the same markup can live on more than one tab ('' = Overview, 'L' =
+   Lanes & Rates). Returns the period-trend object so a caller can reuse it
+   for its own trend note. */
+function renderKpiCards(sfx){
   const scopeRows = filteredRows();
   const t = totals(scopeRows);
-  $('#kShip').textContent = fmtNum(t.n);
-  $('#kRev').textContent = fmt$(t.rev);
-  // avg revenue per calendar month across the months present in scope
+  const el = id => $('#'+id+sfx);
+  el('kShip').textContent = fmtNum(t.n);
+  el('kRev').textContent = fmt$(t.rev);
+  // avg per calendar month across the months present in scope
   const monthsInScope = new Set(scopeRows.map(r=>monthCache[r[R.wk]])).size;
-  $('#kRevAvgMo').textContent = monthsInScope ? `${fmt$(t.rev/monthsInScope)} avg/mo · ${monthsInScope} mo` : '—';
-  $('#kShipAvgMo').textContent = monthsInScope ? `${fmtNum(t.n/monthsInScope)} avg/mo · ${monthsInScope} mo` : '—';
-  $('#kMarginFullAvgMo').textContent = monthsInScope ? `${fmt$(t.margin/monthsInScope)} avg/mo · ${monthsInScope} mo` : '—';
-  $('#kMarginAvgMo').textContent = monthsInScope ? `${fmt$(t.corpMargin/monthsInScope)} avg/mo · ${monthsInScope} mo` : '—';
-  $('#kMarginFull').textContent = fmt$(t.margin);
-  $('#kMarginFullPct').textContent = fmtPct(t.marginPct);
-  $('#kMargin').textContent = fmt$(t.corpMargin);
-  $('#kMarginPct').textContent = fmtPct(t.corpMarginPct);
-  $('#rowCount').textContent = fmtNum(DATA.rows.length);
+  el('kRevAvgMo').textContent = monthsInScope ? `${fmt$(t.rev/monthsInScope)} avg/mo · ${monthsInScope} mo` : '—';
+  el('kShipAvgMo').textContent = monthsInScope ? `${fmtNum(t.n/monthsInScope)} avg/mo · ${monthsInScope} mo` : '—';
+  el('kMarginFullAvgMo').textContent = monthsInScope ? `${fmt$(t.margin/monthsInScope)} avg/mo · ${monthsInScope} mo` : '—';
+  el('kMarginAvgMo').textContent = monthsInScope ? `${fmt$(t.corpMargin/monthsInScope)} avg/mo · ${monthsInScope} mo` : '—';
+  el('kMarginFull').textContent = fmt$(t.margin);
+  el('kMarginFullPct').textContent = fmtPct(t.marginPct);
+  el('kMargin').textContent = fmt$(t.corpMargin);
+  el('kMarginPct').textContent = fmtPct(t.corpMarginPct);
 
   // Corporate margin by group — deliberately ignores the Group filter so all
   // three groups are always listed side by side, highest corporate margin %
-  // first. (Everything else on this tab respects the Group filter.)
+  // first. (Everything else on the tab respects the Group filter.)
   const grpRows = filteredRows({useGroup:false});
   const byGrp = {};
   grpRows.forEach(r=>{
@@ -1807,12 +1855,63 @@ function renderOverview(){
     byGrp[g].rev += r[R.rev]; byGrp[g].corp += (r[R.cmgn]!==undefined?r[R.cmgn]:r[R.mgn]);
   });
   const grpList = Object.values(byGrp).map(o=>({...o, pct: o.rev ? o.corp/o.rev : 0})).sort((a,b)=>b.pct-a.pct);
-  $('#kGroupMargins').innerHTML = grpList.length ? grpList.map(o=>`<div class="kpi-group-row">
+  el('kGroupMargins').innerHTML = grpList.length ? grpList.map(o=>`<div class="kpi-group-row">
       <span class="kpi-group-dot" style="background:${groupColor(o.group)}"></span>
       <span class="kpi-group-name">${o.group}</span>
       <span class="kpi-group-pct">${fmtPct(o.pct)}</span>
       <span class="kpi-group-amt">${fmt$k(o.corp)}</span>
     </div>`).join('') : '<div class="faint">No data</div>';
+
+  // sparklines — last 10 weeks of the full-history series (ignores the Date
+  // filter so there's always a run of weeks to draw)
+  const series = weeklySeries(filteredRows({useWeekEnding:false}));
+  const sp = series.slice(-10);
+  mkSpark('spShip'+sfx, sp.map(s=>s.n), '#EFEFEF');
+  mkSpark('spRev'+sfx, sp.map(s=>s.rev), '#D9A521');
+  mkSpark('spMarginFull'+sfx, sp.map(s=>s.margin), '#6FCF97');
+  mkSpark('spMargin'+sfx, sp.map(s=>s.corpMargin), '#D9A521');
+
+  // Weekly rate-of-change badges: fits a trendline through the weekly figures
+  // across whatever time period is currently selected, and shows the slope
+  // (average change per week) as a % of the period's average level — not the
+  // cumulative change from one end of the period to the other. If only one
+  // week is in scope (a specific Week Ending is selected), there's no run of
+  // weeks to fit a slope to, so it falls back to that week vs. the one
+  // immediately before it (still expressed as a per-week rate).
+  const periodSeries = weeklySeries(scopeRows);
+  let period = null;
+  if(periodSeries.length>=2){
+    period = pickPeriodChange(periodSeries);
+  } else if(periodSeries.length===1){
+    const idx = series.findIndex(s=>s.wk===periodSeries[0].wk);
+    if(idx>0){
+      const prevWk = series[idx-1], currWk = series[idx];
+      const fields = ['n','rev','cost','margin','corpMargin','marginPct'];
+      const trend = {};
+      fields.forEach(f=>{
+        trend[f] = { start:prevWk[f], end:currWk[f], slope: currWk[f]-prevWk[f], mean:(currWk[f]+prevWk[f])/2 };
+      });
+      period = { trend, weeksSpan:1, partialSkipped:false,
+        partialWeek: currWk.wk===mostRecentWeekInData ? currWk : null, singleWeekFallback:true };
+    }
+  }
+  if(period){
+    const title = period.singleWeekFallback ? 'Change vs the prior week' : `Average weekly rate of change, trend over ${period.weeksSpan} wks`;
+    slopeBadge(el('kShipD'), period.trend.n, true, title);
+    slopeBadge(el('kRevD'), period.trend.rev, true, title);
+    slopeBadge(el('kMarginFullD'), period.trend.margin, true, title);
+    slopeBadge(el('kMarginD'), period.trend.corpMargin, true, title);
+  } else {
+    ['kShipD','kRevD','kMarginFullD','kMarginD'].forEach(id=>{ const e=el(id); e.textContent=''; e.className='kpi-delta flat'; e.removeAttribute('title'); });
+  }
+  return period;
+}
+
+function renderOverview(){
+  const scopeRows = filteredRows();
+  const t = totals(scopeRows);
+  const period = renderKpiCards('');
+  $('#rowCount').textContent = fmtNum(DATA.rows.length);
 
   const scopeParts = [];
   const describeSel = (sel, displayFn) => sel.length<=2 ? sel.map(displayFn||(x=>x)).join(', ') : sel.length+' selected';
@@ -1894,46 +1993,6 @@ function renderOverview(){
       }}
   });
 
-  // sparklines - last 10 weeks of scope-respecting-weekEnding trend? use trendRows series too (unbounded by weekEnding for continuity)
-  const sp = series.slice(-10);
-  mkSpark('spShip', sp.map(s=>s.n), '#EFEFEF');
-  mkSpark('spRev', sp.map(s=>s.rev), '#D9A521');
-  mkSpark('spMarginFull', sp.map(s=>s.margin), '#6FCF97');
-  mkSpark('spMargin', sp.map(s=>s.corpMargin), '#D9A521');
-
-  // Weekly rate-of-change badges: fits a trendline through the weekly figures
-  // across whatever time period is currently selected, and shows the slope
-  // (average change per week) as a % of the period's average level — not the
-  // cumulative change from one end of the period to the other. If only one
-  // week is in scope (a specific Week Ending is selected), there's no run of
-  // weeks to fit a slope to, so it falls back to that week vs. the one
-  // immediately before it (still expressed as a per-week rate).
-  const periodSeries = weeklySeries(scopeRows);
-  let period = null;
-  if(periodSeries.length>=2){
-    period = pickPeriodChange(periodSeries);
-  } else if(periodSeries.length===1){
-    const idx = series.findIndex(s=>s.wk===periodSeries[0].wk);
-    if(idx>0){
-      const prevWk = series[idx-1], currWk = series[idx];
-      const fields = ['n','rev','cost','margin','corpMargin','marginPct'];
-      const trend = {};
-      fields.forEach(f=>{
-        trend[f] = { start:prevWk[f], end:currWk[f], slope: currWk[f]-prevWk[f], mean:(currWk[f]+prevWk[f])/2 };
-      });
-      period = { trend, weeksSpan:1, partialSkipped:false,
-        partialWeek: currWk.wk===mostRecentWeekInData ? currWk : null, singleWeekFallback:true };
-    }
-  }
-  if(period){
-    const title = period.singleWeekFallback ? 'Change vs the prior week' : `Average weekly rate of change, trend over ${period.weeksSpan} wks`;
-    slopeBadge($('#kShipD'), period.trend.n, true, title);
-    slopeBadge($('#kRevD'), period.trend.rev, true, title);
-    slopeBadge($('#kMarginFullD'), period.trend.margin, true, title);
-    slopeBadge($('#kMarginD'), period.trend.corpMargin, true, title);
-  } else {
-    ['kShipD','kRevD','kMarginFullD','kMarginD'].forEach(id=>{ $('#'+id).textContent=''; $('#'+id).className='kpi-delta flat'; $('#'+id).removeAttribute('title'); });
-  }
   // Trend note flags the partial trailing week so it isn't misread as a real drop-off,
   // and states what basis the badges above are on (since the badge text itself is kept short)
   const basisTxt = period ? (period.singleWeekFallback ? 'badges show change vs. prior week' : `badges show avg %/wk trend over ${period.weeksSpan} wks`) : '';
@@ -2050,8 +2109,9 @@ function renderScorecard(){
   // (Array.sort is a stable sort, so everyone else keeps their existing
   // loads-sorted relative order.)
   const chartArr = arr.slice().sort((a,b)=>{
-    if(a.broker==='Agent') return 1;
-    if(b.broker==='Agent') return -1;
+    const aA = isAgentBroker(a.broker), bA = isAgentBroker(b.broker);
+    if(aA && !bA) return 1;
+    if(bA && !aA) return -1;
     return 0;
   });
   // Margin by group — deliberately ignores the Group filter itself (like the
@@ -2101,7 +2161,7 @@ function renderScorecard(){
 
   // Rate Diff / KPI only apply to the 3 main brokers — Agent is excluded
   // entirely from these two charts rather than shown as a blank/zero bar.
-  const rateKpiArr = arr.filter(o=>o.broker!=='Agent' && (o.avgRateDiff!==null || o.avgKpi!==null));
+  const rateKpiArr = arr.filter(o=>!isAgentBroker(o.broker) && (o.avgRateDiff!==null || o.avgKpi!==null));
   mkChart('chScorecardRateDiff', {
     type:'bar',
     data:{labels:rateKpiArr.map(o=>o.broker), datasets:[{label:'Carrier Pay Diff',data:rateKpiArr.map(o=>o.avgRateDiff===null?0:+o.avgRateDiff.toFixed(2)),backgroundColor:rateKpiArr.map(o=>brokerColor(o.broker)),borderRadius:5}]},
@@ -2139,7 +2199,7 @@ function renderScorecard(){
   const brokersInScope = Array.from(new Set(trendRows.map(r=>DATA.brokers[r[R.br]])));
 
   // KPI trend — Agent excluded, same rule as everywhere else KPI appears
-  const brokersForKpi = brokersInScope.filter(b=>b!=='Agent');
+  const brokersForKpi = brokersInScope.filter(b=>!isAgentBroker(b));
   const kpiDatasets = brokersForKpi.map(b=>({
     label:b,
     data:trendWeeks.map(wk=>{ const o=byWeekBroker[wk+'|'+b]; const avg = o ? avgIgnoringNulls(o.kpis) : null; return avg===null ? null : +avg.toFixed(1); }),
@@ -2320,6 +2380,7 @@ function wireLaneExpand(tbodySelector){
   });
 }
 function renderLanes(){
+  renderKpiCards('L');
   const rows = filteredRows();
   const laneAgg = laneAggregate(rows);
   window.__laneCarrierMap = laneCarrierBreakdown(rows);
@@ -2342,8 +2403,17 @@ function renderLanes(){
 }
 function renderLaneSearch(){
   const q = ($('#laneSearch').value||'').toLowerCase().trim();
+  const qo = ($('#laneSearchOrigin').value||'').toLowerCase().trim();
+  const qd = ($('#laneSearchDest').value||'').toLowerCase().trim();
   let arr = window.__laneAggAll || [];
-  // region is searchable too, so typing "Canada" or "Midwest" narrows the list
+  // Origin / Destination each match their own half of the lane ("City, ST"),
+  // so "ME" in Origin finds lanes leaving Maine without also matching lanes
+  // that merely end in Maine. All three boxes combine (AND).
+  if(qo || qd) arr = arr.filter(l=>{
+    const [o, d] = splitLane(l.lane).map(s=>s.toLowerCase());
+    return (!qo || o.includes(qo)) && (!qd || d.includes(qd));
+  });
+  // general box: broker, customer, region (or any part of the lane text)
   if(q) arr = arr.filter(l=> l.lane.toLowerCase().includes(q) || (l.brokerList||[l.broker]).some(b=>b.toLowerCase().includes(q)) || (l.custList||[l.cust]).some(c=>c.toLowerCase().includes(q)) || (l.region||'').toLowerCase().includes(q));
   // sorted by margin per load, highest to lowest
   arr = arr.slice().sort((a,b)=>b.marginLoad-a.marginLoad).slice(0,200);
@@ -2361,9 +2431,10 @@ function renderLaneSearch(){
   }).join('')
     || `<tr><td colspan="10" class="empty-state">No matching lanes</td></tr>`;
   wireLaneExpand('#tblAllLanes tbody');
-  $('#laneSearchNote').textContent = `Showing ${Math.min(arr.length,200)} of ${(window.__laneAggAll||[]).length} lanes in scope${q?' matching “'+q+'”':''}`;
+  const terms = [qo?'origin “'+qo+'”':'', qd?'destination “'+qd+'”':'', q?'“'+q+'”':''].filter(Boolean).join(', ');
+  $('#laneSearchNote').textContent = `Showing ${Math.min(arr.length,200)} of ${(window.__laneAggAll||[]).length} lanes in scope${terms?' matching '+terms:''}`;
 }
-$('#laneSearch').addEventListener('input', renderLaneSearch);
+['laneSearch','laneSearchOrigin','laneSearchDest'].forEach(id=>$('#'+id).addEventListener('input', renderLaneSearch));
 
 /* Click-to-expand: show lanes run + volumes for a carrier, for the current
    filter scope. Uses event delegation since rows are re-rendered on filter change. */
