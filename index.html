@@ -740,7 +740,16 @@ let CARRIER_EMAILS = {};
 const $ = s => document.querySelector(s);
 const $$ = s => Array.from(document.querySelectorAll(s));
 const fmt$ = v => '$' + Math.round(v).toLocaleString('en-US');
-const fmt$k = v => '$' + (v/1000).toFixed(v>=100000?0:1) + 'k';
+/* Compact $ for chart labels/axes. Rolls over to M at $1,000,000 so large
+   totals read as "$1.5M" rather than "$1500k". Negative values keep their
+   sign. */
+const fmt$k = v => {
+  const neg = v < 0, a = Math.abs(v);
+  let s;
+  if(a >= 999500) s = '$' + (a/1e6).toFixed(a >= 1e8 ? 0 : 1) + 'M';
+  else s = '$' + (a/1000).toFixed(a >= 100000 ? 0 : 1) + 'k';
+  return neg ? '-' + s : s;
+};
 const fmtPct = v => (v*100).toFixed(1) + '%';
 const fmtNum = v => Math.round(v).toLocaleString('en-US');
 /* ================= CSV EXPORT ================= */
