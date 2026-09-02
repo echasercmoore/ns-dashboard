@@ -219,6 +219,15 @@ main{max-width:1520px;margin:0 auto;padding:22px 28px 60px;position:relative;z-i
 .down{color:#F27281;background:var(--red-soft)}
 .flat{color:var(--silver-dim);background:var(--midnight-3)}
 .kpi-spark{margin-top:auto;padding-top:6px;height:24px;flex-shrink:0;min-width:0}
+.kpi-val-row{display:flex;align-items:baseline;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.kpi-side{font-size:17px;font-weight:800;color:var(--gold-bright);white-space:nowrap;margin-left:auto;text-align:right}
+.kpi-sub{font-size:13.5px;font-weight:700;color:var(--silver);margin-top:4px;white-space:nowrap}
+.kpi-groups{margin-top:6px;display:flex;flex-direction:column;gap:4px;font-size:11.5px}
+.kpi-group-row{display:flex;align-items:center;gap:7px;white-space:nowrap}
+.kpi-group-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.kpi-group-name{color:var(--silver);font-weight:600;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.kpi-group-pct{color:var(--gold-bright);font-weight:800}
+.kpi-group-amt{color:var(--silver-dim);font-weight:600;min-width:52px;text-align:right}
 
 .chart-wrap{position:relative;height:260px;min-width:0}
 .chart-scroll{overflow-x:auto;overflow-y:hidden}
@@ -397,20 +406,27 @@ tr.detail-row td{padding:0;border-bottom:1px solid rgba(46,46,51,.55)}
   <section class="view active" id="view-overview">
     <div class="grid kpis">
       <div class="card kpi"><span class="eyebrow">Shipments</span>
-        <div class="kpi-val num" id="kShip">—</div><span class="kpi-delta" id="kShipD"></span>
+        <div class="kpi-val num" id="kShip">—</div>
+        <div class="kpi-sub num" id="kShipAvgMo" title="Total shipments ÷ number of calendar months in the current scope">—</div>
+        <span class="kpi-delta" id="kShipD"></span>
         <div class="kpi-spark"><canvas id="spShip"></canvas></div></div>
       <div class="card kpi"><span class="eyebrow">Customer Revenue</span>
-        <div class="kpi-val num" id="kRev">—</div><span class="kpi-delta" id="kRevD"></span>
+        <div class="kpi-val num" id="kRev">—</div>
+        <div class="kpi-sub num" id="kRevAvgMo" title="Total revenue ÷ number of calendar months in the current scope">—</div>
+        <span class="kpi-delta" id="kRevD"></span>
         <div class="kpi-spark"><canvas id="spRev"></canvas></div></div>
-      <div class="card kpi"><span class="eyebrow">Carrier Pay (Cost)</span>
-        <div class="kpi-val num" id="kCost">—</div><span class="kpi-delta" id="kCostD"></span>
-        <div class="kpi-spark"><canvas id="spCost"></canvas></div></div>
+      <div class="card kpi"><span class="eyebrow">Total Margin $</span>
+        <div class="kpi-val-row"><div class="kpi-val num" id="kMarginFull">—</div><span class="kpi-side num" id="kMarginFullPct" title="Full (pre-corporate) margin as % of revenue">—</span></div>
+        <div class="kpi-sub num" id="kMarginFullAvgMo" title="Total margin ÷ number of calendar months in the current scope">—</div>
+        <span class="kpi-delta" id="kMarginFullD"></span>
+        <div class="kpi-spark"><canvas id="spMarginFull"></canvas></div></div>
       <div class="card kpi"><span class="eyebrow">Corporate Margin $</span>
-        <div class="kpi-val num" id="kMargin">—</div><span class="kpi-delta" id="kMarginD"></span>
+        <div class="kpi-val-row"><div class="kpi-val num" id="kMargin">—</div><span class="kpi-side num" id="kMarginPct" title="Corporate margin as % of revenue">—</span></div>
+        <div class="kpi-sub num" id="kMarginAvgMo" title="Corporate margin ÷ number of calendar months in the current scope">—</div>
+        <span class="kpi-delta" id="kMarginD"></span>
         <div class="kpi-spark"><canvas id="spMargin"></canvas></div></div>
-      <div class="card kpi"><span class="eyebrow">Margin %</span>
-        <div class="kpi-val num" id="kMarginPct">—</div><span class="kpi-delta" id="kMarginPctD"></span>
-        <div class="kpi-spark"><canvas id="spMarginPct"></canvas></div></div>
+      <div class="card kpi"><span class="eyebrow">Corporate Margin by Group</span>
+        <div class="kpi-groups" id="kGroupMargins"></div></div>
     </div>
 
     <div class="grid row-2b mt">
@@ -1639,6 +1655,10 @@ const REGION_COLORS = {
   'Other':     '#A6A6AD'  // grey
 };
 function regionColor(name){ return REGION_COLORS[name] || '#8D99AE'; }
+/* Business-group colors, shared by the Overview group card and the Scorecard
+   "Margin by group" chart. */
+const GROUP_COLORS = {'NS Corporate':'#D9A521','Agent':'#BA0F24','TFL':'#5B8FD6'};
+function groupColor(name){ return GROUP_COLORS[name] || '#6FCF97'; }
 function sortRegions(list){
   return list.slice().sort((a,b)=>{
     const ia = REGION_ORDER.indexOf(a), ib = REGION_ORDER.indexOf(b);
@@ -1731,7 +1751,7 @@ function pickPeriodChange(periodSeries){
     partialSkipped = true;
   }
   if(series.length<2) return null;
-  const fields = ['n','rev','cost','margin','marginPct'];
+  const fields = ['n','rev','cost','margin','corpMargin','marginPct'];
   const trend = {};
   fields.forEach(f=>{ trend[f] = linTrend(series.map(s=>s[f])); });
   return { trend, weeksSpan: series.length, partialSkipped, partialWeek };
@@ -1742,18 +1762,19 @@ function weeklySeries(rows){
   const map = {};
   rows.forEach(r=>{
     const wk = r[R.wk];
-    if(!map[wk]) map[wk] = {wk, n:0, rev:0, cost:0, margin:0};
+    if(!map[wk]) map[wk] = {wk, n:0, rev:0, cost:0, margin:0, corpMargin:0};
     const o = map[wk];
-    o.n++; o.rev+=r[R.rev]; o.cost+=r[R.cost]; o.margin+=r[R.mgn];
+    o.n++; o.rev+=r[R.rev]; o.cost+=r[R.cost]; o.margin+=r[R.mgn]; o.corpMargin+=(r[R.cmgn]!==undefined?r[R.cmgn]:r[R.mgn]);
   });
   const arr = Object.values(map).sort((a,b)=>a.wk.localeCompare(b.wk));
-  arr.forEach(o=>{ o.marginPct = o.rev ? o.margin/o.rev : 0; o.revLoad = o.n ? o.rev/o.n : 0; o.marginLoad = o.n ? o.margin/o.n : 0; });
+  arr.forEach(o=>{ o.marginPct = o.rev ? o.margin/o.rev : 0; o.corpMarginPct = o.rev ? o.corpMargin/o.rev : 0; o.revLoad = o.n ? o.rev/o.n : 0; o.marginLoad = o.n ? o.margin/o.n : 0; });
   return arr;
 }
 function totals(rows){
-  const t = {n:rows.length, rev:0, cost:0, margin:0};
-  rows.forEach(r=>{ t.rev+=r[R.rev]; t.cost+=r[R.cost]; t.margin+=r[R.mgn]; });
+  const t = {n:rows.length, rev:0, cost:0, margin:0, corpMargin:0};
+  rows.forEach(r=>{ t.rev+=r[R.rev]; t.cost+=r[R.cost]; t.margin+=r[R.mgn]; t.corpMargin+=(r[R.cmgn]!==undefined?r[R.cmgn]:r[R.mgn]); });
   t.marginPct = t.rev ? t.margin/t.rev : 0;
+  t.corpMarginPct = t.rev ? t.corpMargin/t.rev : 0;
   return t;
 }
 
@@ -1763,10 +1784,35 @@ function renderOverview(){
   const t = totals(scopeRows);
   $('#kShip').textContent = fmtNum(t.n);
   $('#kRev').textContent = fmt$(t.rev);
-  $('#kCost').textContent = fmt$(t.cost);
-  $('#kMargin').textContent = fmt$(t.margin);
-  $('#kMarginPct').textContent = fmtPct(t.marginPct);
+  // avg revenue per calendar month across the months present in scope
+  const monthsInScope = new Set(scopeRows.map(r=>monthCache[r[R.wk]])).size;
+  $('#kRevAvgMo').textContent = monthsInScope ? `${fmt$(t.rev/monthsInScope)} avg/mo · ${monthsInScope} mo` : '—';
+  $('#kShipAvgMo').textContent = monthsInScope ? `${fmtNum(t.n/monthsInScope)} avg/mo · ${monthsInScope} mo` : '—';
+  $('#kMarginFullAvgMo').textContent = monthsInScope ? `${fmt$(t.margin/monthsInScope)} avg/mo · ${monthsInScope} mo` : '—';
+  $('#kMarginAvgMo').textContent = monthsInScope ? `${fmt$(t.corpMargin/monthsInScope)} avg/mo · ${monthsInScope} mo` : '—';
+  $('#kMarginFull').textContent = fmt$(t.margin);
+  $('#kMarginFullPct').textContent = fmtPct(t.marginPct);
+  $('#kMargin').textContent = fmt$(t.corpMargin);
+  $('#kMarginPct').textContent = fmtPct(t.corpMarginPct);
   $('#rowCount').textContent = fmtNum(DATA.rows.length);
+
+  // Corporate margin by group — deliberately ignores the Group filter so all
+  // three groups are always listed side by side, highest corporate margin %
+  // first. (Everything else on this tab respects the Group filter.)
+  const grpRows = filteredRows({useGroup:false});
+  const byGrp = {};
+  grpRows.forEach(r=>{
+    const g = DATA.groups[r[R.grp]];
+    if(!byGrp[g]) byGrp[g] = {group:g, rev:0, corp:0};
+    byGrp[g].rev += r[R.rev]; byGrp[g].corp += (r[R.cmgn]!==undefined?r[R.cmgn]:r[R.mgn]);
+  });
+  const grpList = Object.values(byGrp).map(o=>({...o, pct: o.rev ? o.corp/o.rev : 0})).sort((a,b)=>b.pct-a.pct);
+  $('#kGroupMargins').innerHTML = grpList.length ? grpList.map(o=>`<div class="kpi-group-row">
+      <span class="kpi-group-dot" style="background:${groupColor(o.group)}"></span>
+      <span class="kpi-group-name">${o.group}</span>
+      <span class="kpi-group-pct">${fmtPct(o.pct)}</span>
+      <span class="kpi-group-amt">${fmt$k(o.corp)}</span>
+    </div>`).join('') : '<div class="faint">No data</div>';
 
   const scopeParts = [];
   const describeSel = (sel, displayFn) => sel.length<=2 ? sel.map(displayFn||(x=>x)).join(', ') : sel.length+' selected';
@@ -1852,9 +1898,8 @@ function renderOverview(){
   const sp = series.slice(-10);
   mkSpark('spShip', sp.map(s=>s.n), '#EFEFEF');
   mkSpark('spRev', sp.map(s=>s.rev), '#D9A521');
-  mkSpark('spCost', sp.map(s=>s.cost), '#A6A6AD');
-  mkSpark('spMargin', sp.map(s=>s.margin), '#D9A521');
-  mkSpark('spMarginPct', sp.map(s=>s.marginPct*100), '#6FCF97');
+  mkSpark('spMarginFull', sp.map(s=>s.margin), '#6FCF97');
+  mkSpark('spMargin', sp.map(s=>s.corpMargin), '#D9A521');
 
   // Weekly rate-of-change badges: fits a trendline through the weekly figures
   // across whatever time period is currently selected, and shows the slope
@@ -1871,7 +1916,7 @@ function renderOverview(){
     const idx = series.findIndex(s=>s.wk===periodSeries[0].wk);
     if(idx>0){
       const prevWk = series[idx-1], currWk = series[idx];
-      const fields = ['n','rev','cost','margin','marginPct'];
+      const fields = ['n','rev','cost','margin','corpMargin','marginPct'];
       const trend = {};
       fields.forEach(f=>{
         trend[f] = { start:prevWk[f], end:currWk[f], slope: currWk[f]-prevWk[f], mean:(currWk[f]+prevWk[f])/2 };
@@ -1884,11 +1929,10 @@ function renderOverview(){
     const title = period.singleWeekFallback ? 'Change vs the prior week' : `Average weekly rate of change, trend over ${period.weeksSpan} wks`;
     slopeBadge($('#kShipD'), period.trend.n, true, title);
     slopeBadge($('#kRevD'), period.trend.rev, true, title);
-    slopeBadge($('#kCostD'), period.trend.cost, false, title);
-    slopeBadge($('#kMarginD'), period.trend.margin, true, title);
-    slopeBadge($('#kMarginPctD'), period.trend.marginPct, true, title);
+    slopeBadge($('#kMarginFullD'), period.trend.margin, true, title);
+    slopeBadge($('#kMarginD'), period.trend.corpMargin, true, title);
   } else {
-    ['kShipD','kRevD','kCostD','kMarginD','kMarginPctD'].forEach(id=>{ $('#'+id).textContent=''; $('#'+id).className='kpi-delta flat'; $('#'+id).removeAttribute('title'); });
+    ['kShipD','kRevD','kMarginFullD','kMarginD'].forEach(id=>{ $('#'+id).textContent=''; $('#'+id).className='kpi-delta flat'; $('#'+id).removeAttribute('title'); });
   }
   // Trend note flags the partial trailing week so it isn't misread as a real drop-off,
   // and states what basis the badges above are on (since the badge text itself is kept short)
@@ -2022,12 +2066,11 @@ function renderScorecard(){
     byGroup[g].corpMargin += r[R.cmgn];
   });
   const groupOrder = ['NS Corporate','Agent','TFL'].filter(g=>byGroup[g]);
-  const groupColors = {'NS Corporate':'#D9A521','Agent':'#BA0F24','TFL':'#5B8FD6'};
   mkChart('chGroupMargin', {
     type:'bar',
     data:{labels:groupOrder, datasets:[
-      {label:'Margin (full)',data:groupOrder.map(g=>Math.round(byGroup[g].margin)),backgroundColor:groupOrder.map(g=>hexToRgba(groupColors[g],.5)),borderRadius:5},
-      {label:'Corporate Margin',data:groupOrder.map(g=>Math.round(byGroup[g].corpMargin)),backgroundColor:groupOrder.map(g=>groupColors[g]),borderRadius:5}
+      {label:'Margin (full)',data:groupOrder.map(g=>Math.round(byGroup[g].margin)),backgroundColor:groupOrder.map(g=>hexToRgba(groupColor(g),.5)),borderRadius:5},
+      {label:'Corporate Margin',data:groupOrder.map(g=>Math.round(byGroup[g].corpMargin)),backgroundColor:groupOrder.map(g=>groupColor(g)),borderRadius:5}
     ]},
     plugins:[ChartDataLabels],
     options:{responsive:true,maintainAspectRatio:false,
