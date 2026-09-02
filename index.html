@@ -261,6 +261,7 @@ th.r,td.r{text-align:right}
 .chip-green{color:#6FCF97;background:var(--green-soft)}
 .chip-red{color:#F27281;background:var(--red-soft)}
 .chip-blue{color:var(--blue);background:rgba(91,143,214,.14)}
+.region-chip{font-size:10px;padding:2px 8px;white-space:nowrap}
 .email-btn{display:inline-block;padding:4px 11px;border-radius:6px;font-size:11px;font-weight:700;
   border:1px solid var(--line);background:var(--midnight-2);color:var(--gold-bright);text-decoration:none;
   white-space:nowrap;cursor:pointer;transition:border-color .15s}
@@ -434,8 +435,8 @@ tr.detail-row td{padding:0;border-bottom:1px solid rgba(46,46,51,.55)}
         <div class="chart-wrap tall"><canvas id="chBrokerMix"></canvas></div>
       </div>
       <div class="card">
-        <div class="card-h"><span class="eyebrow">Revenue by region</span><span class="card-note"></span></div>
-        <div class="chart-wrap"><canvas id="chRegion"></canvas></div>
+        <div class="card-h"><span class="eyebrow">Revenue &amp; margin by region</span><span class="card-note">All regions from the Region tab · current filter scope</span></div>
+        <div class="chart-wrap tall"><canvas id="chRegion"></canvas></div>
       </div>
     </div>
 
@@ -525,7 +526,7 @@ tr.detail-row td{padding:0;border-bottom:1px solid rgba(46,46,51,.55)}
         <button class="btn-export" onclick="exportRawRows(filteredRows(),'lanes-detail')">Export CSV</button>
       </div>
       <div class="table-scroll"><table id="tblTopLanes"><thead><tr>
-        <th>Lane</th><th>Broker</th><th>Customer</th><th class="r">Loads</th><th class="r">Avg Revenue</th>
+        <th>Lane</th><th>Broker</th><th>Customer</th><th>Region</th><th class="r">Loads</th><th class="r">Avg Revenue</th>
         <th class="r">Avg Cost</th><th class="r">Margin/Load</th><th class="r">Gross Profit</th><th class="r">Margin %</th>
         <th class="r">Avg Miles</th><th class="r">Rev/Mile</th>
       </tr></thead><tbody></tbody></table></div>
@@ -539,7 +540,7 @@ tr.detail-row td{padding:0;border-bottom:1px solid rgba(46,46,51,.55)}
         <button class="btn-export" onclick="exportRawRows(filteredRows(),'lanes-detail')">Export CSV</button>
       </div>
       <div class="table-scroll"><table id="tblBottomLanes"><thead><tr>
-        <th>Lane</th><th>Broker</th><th>Customer</th><th class="r">Loads</th><th class="r">Avg Revenue</th>
+        <th>Lane</th><th>Broker</th><th>Customer</th><th>Region</th><th class="r">Loads</th><th class="r">Avg Revenue</th>
         <th class="r">Avg Cost</th><th class="r">Margin/Load</th><th class="r">Gross Profit</th><th class="r">Margin %</th>
         <th class="r">Avg Miles</th><th class="r">Rev/Mile</th>
       </tr></thead><tbody></tbody></table></div>
@@ -553,7 +554,7 @@ tr.detail-row td{padding:0;border-bottom:1px solid rgba(46,46,51,.55)}
         <button class="btn-export" onclick="exportRawRows(filteredRows(),'lanes-detail')">Export CSV</button>
       </div>
       <div class="table-scroll"><table id="tblBottomKpiLanes"><thead><tr>
-        <th>Lane</th><th>Broker</th><th>Customer</th><th class="r">Loads</th><th class="r">Avg Revenue</th>
+        <th>Lane</th><th>Broker</th><th>Customer</th><th>Region</th><th class="r">Loads</th><th class="r">Avg Revenue</th>
         <th class="r">Avg Cost</th><th class="r">Margin/Load</th><th class="r">Gross Profit</th><th class="r">Avg KPI %</th>
         <th class="r">Avg Miles</th><th class="r">Rev/Mile</th>
       </tr></thead><tbody></tbody></table></div>
@@ -564,11 +565,11 @@ tr.detail-row td{padding:0;border-bottom:1px solid rgba(46,46,51,.55)}
           <span class="eyebrow">Search all lanes</span>
           <span class="card-note">Sorted by margin/load, highest to lowest</span>
         </div>
-        <input class="searchbox" id="laneSearch" placeholder="Search lane, broker, or customer…">
+        <input class="searchbox" id="laneSearch" placeholder="Search lane, broker, customer, or region…">
         <button class="btn-export" onclick="exportRawRows(filteredRows(),'lanes-detail')">Export CSV</button>
       </div>
       <div class="table-scroll"><table id="tblAllLanes"><thead><tr>
-        <th>Lane</th><th>Broker</th><th>Customer</th><th class="r">Loads</th><th class="r">Avg Revenue</th>
+        <th>Lane</th><th>Broker</th><th>Customer</th><th>Region</th><th class="r">Loads</th><th class="r">Avg Revenue</th>
         <th class="r">Margin/Load</th><th class="r">Margin %</th><th class="r">Avg Miles</th><th class="r">Rev/Mile</th>
       </tr></thead><tbody></tbody></table></div>
       <p class="faint mt" id="laneSearchNote"></p>
@@ -1036,6 +1037,19 @@ function buildCarrierEmailMap(carrierEmailRows){
   });
   return result;
 }
+/* TFL reps that should roll up into a single "Other" bucket rather than
+   appearing individually. Matched on first name (so "Mary Cox" matches
+   "Mary") or the exact full name for non-person entries like TurvoBot.
+   Add to these lists as needed. */
+const TFL_OTHER_FIRST_NAMES = ['megan','mary'];
+const TFL_OTHER_FULL_NAMES = ['turvobot'];
+function normalizeTflBroker(raw){
+  const name = (raw||'Unknown').trim();
+  const lower = name.toLowerCase();
+  const first = lower.split(/\s+/)[0];
+  if(TFL_OTHER_FULL_NAMES.includes(lower) || TFL_OTHER_FIRST_NAMES.includes(first)) return 'Other';
+  return name;
+}
 function buildDataFromSheetRows(rawRows, tflRawRows, regionMap){
   const brokers=[], regions=[], custs=[], lanes=[], carriers=[], groups=[];
   const enc = (lst, v) => { if(!lst.includes(v)) lst.push(v); return lst.indexOf(v); };
@@ -1116,7 +1130,7 @@ function buildDataFromSheetRows(rawRows, tflRawRows, regionMap){
     if(!delDateStr){ skippedNoDeliveryDate++; return; }
     const wkStr = saturdayOfWeek(delDateStr);
     const dow = parseDate(delDateStr).getDay();
-    const b = enc(brokers, (row['Broker']||'Unknown').trim());
+    const b = enc(brokers, normalizeTflBroker(row['Broker']));
     const destState = (row['D ST']||'').trim().toUpperCase();
     const regionVal = (regionMap && destState && regionMap[destState]) || 'Other';
     if(regionMap && Object.keys(regionMap).length){
@@ -1154,7 +1168,12 @@ function buildDataFromSheetRows(rawRows, tflRawRows, regionMap){
   });
 
   rowsOut.sort((a,b)=>a[0]<b[0]?-1:a[0]>b[0]?1:0);
-  return {brokers, regions, custs, lanes, carriers, groups, rows:rowsOut, regionMapHits, regionMapMisses, skippedNoRevenue, skippedNoDeliveryDate, totalRawRows: rawRows.length + (tflRawRows?tflRawRows.length:0)};
+  // Full region universe = every region named on the Region tab, plus any
+  // that showed up in the data anyway (e.g. 'Other' for unmapped states).
+  // Used so charts/filters list ALL regions in a fixed order, not just the
+  // ones that happen to have data in the current scope.
+  const allRegions = Array.from(new Set([...Object.values(regionMap||{}), ...regions]));
+  return {brokers, regions, allRegions, custs, lanes, carriers, groups, rows:rowsOut, regionMapHits, regionMapMisses, skippedNoRevenue, skippedNoDeliveryDate, totalRawRows: rawRows.length + (tflRawRows?tflRawRows.length:0)};
 }
 
 function setLiveStatus(mode, text){
@@ -1293,9 +1312,10 @@ function uniqueSorted(arr){ return Array.from(new Set(arr)); }
 
 
 function buildOptions(){
+  assignBrokerColors();
   const custOpts = DATA.custs.slice().sort();
   const brokerOpts = DATA.brokers.slice().sort();
-  const regionOpts = DATA.regions.slice().sort();
+  const regionOpts = allRegionsOrdered();
   // fixed business-meaningful order rather than alphabetical, and only
   // includes groups actually present in the data (e.g. if the TFL Data tab
   // didn't load, "TFL" just won't show up as an option)
@@ -1560,14 +1580,71 @@ const tt = { backgroundColor:'#1E1E21', borderColor:'#2E2E33', borderWidth:1, ti
 /* Single source of truth for broker colors — used everywhere a broker is
    color-coded (Overview donut, Overview stacked volume chart, Scorecard bar
    charts, Scorecard margin trend lines) so the same broker is always the
-   same color across every tab. */
+   same color across every tab. Explicit colors for known brokers; any
+   broker not listed gets a stable color from the fallback palette, assigned
+   in alphabetical order at data-load time so it's the same on every tab
+   and every reload (not first-come-first-served per chart, which would
+   let the same name drift between colors). */
 const BROKER_COLORS = {
+  // NS Corporate + Agent
   'Michael Garrison': '#5B8FD6', // blue
   'Sandra Duhamel': '#D9A521',   // yellow/gold
   'Kade McDonald': '#A6A6AD',    // grey
-  'Agent': '#BA0F24'             // red
+  'Agent': '#BA0F24',            // red
+  // TFL reps
+  'Arony Navarro': '#6FCF97',    // green
+  'Brandon Hall': '#C77DFF',     // purple
+  'Eugene Marinelli': '#FF9F43', // orange
+  'Kerry Michalek': '#4ECDC4',   // teal
+  'Michael Williams': '#F78FB3', // pink
+  'Ricardo Navarro': '#7FB4C9',  // steel blue
+  'Brian Hons': '#B8E994',       // lime
+  'Other': '#E0C097'             // tan
 };
-function brokerColor(name){ return BROKER_COLORS[name] || '#6FCF97'; }
+const BROKER_FALLBACK_PALETTE = ['#E76F51','#2A9D8F','#CDB4DB','#8D99AE','#FFB4A2','#B5838D','#90BE6D','#F9C74F','#577590','#F8961E'];
+let BROKER_COLOR_ASSIGNMENTS = {};
+function assignBrokerColors(){
+  BROKER_COLOR_ASSIGNMENTS = {};
+  if(!DATA || !DATA.brokers) return;
+  let fallbackIdx = 0;
+  DATA.brokers.slice().sort().forEach(b=>{
+    if(BROKER_COLORS[b]) BROKER_COLOR_ASSIGNMENTS[b] = BROKER_COLORS[b];
+    else { BROKER_COLOR_ASSIGNMENTS[b] = BROKER_FALLBACK_PALETTE[fallbackIdx % BROKER_FALLBACK_PALETTE.length]; fallbackIdx++; }
+  });
+}
+function brokerColor(name){ return BROKER_COLOR_ASSIGNMENTS[name] || BROKER_COLORS[name] || '#6FCF97'; }
+/* Regions: a fixed, geographically sensible display order (rather than
+   alphabetical or by-revenue, which would reshuffle between filters) and a
+   distinct color per region used consistently wherever regions are charted.
+   Regions not in this list (a new one added to the Region tab later) fall
+   in after the known ones, alphabetically, with a fallback color. */
+const REGION_ORDER = ['Northeast','Southeast','Midwest','Southwest','Mountain','Pacific','Canada','Other'];
+const REGION_COLORS = {
+  'Northeast': '#4ECDC4', // teal
+  'Southeast': '#FF9F43', // orange
+  'Midwest':   '#D9A521', // gold
+  'Southwest': '#E76F51', // terracotta
+  'Mountain':  '#C77DFF', // purple
+  'Pacific':   '#6FCF97', // green
+  'Canada':    '#F78FB3', // pink
+  'Other':     '#A6A6AD'  // grey
+};
+function regionColor(name){ return REGION_COLORS[name] || '#8D99AE'; }
+function sortRegions(list){
+  return list.slice().sort((a,b)=>{
+    const ia = REGION_ORDER.indexOf(a), ib = REGION_ORDER.indexOf(b);
+    if(ia===-1 && ib===-1) return a.localeCompare(b);
+    if(ia===-1) return 1;
+    if(ib===-1) return -1;
+    return ia-ib;
+  });
+}
+/* Every region the dashboard knows about, in canonical order — the Region
+   tab's full list when available, otherwise just what's in the data. */
+function allRegionsOrdered(){
+  const base = (DATA && DATA.allRegions && DATA.allRegions.length) ? DATA.allRegions : (DATA ? DATA.regions : []);
+  return sortRegions(base);
+}
 /* Converts a hex color to an rgba() string with the given alpha (0-1) —
    used to dim broker colors for overlay/secondary chart elements. */
 function hexToRgba(hex, alpha){
@@ -1827,17 +1904,21 @@ function renderOverview(){
         font:{weight:'800',size:11},formatter:v=>fmtNum(v),display:ctx=>ctx.dataset.data[ctx.dataIndex]>0}},cutout:'62%'}
   });
 
-  // region revenue bar
-  const byRegion = {};
-  scopeRows.forEach(r=>{ const rg=DATA.regions[r[R.rg]]; byRegion[rg]=(byRegion[rg]||0)+r[R.rev]; });
-  const rLabels = Object.keys(byRegion).sort((a,b)=>byRegion[b]-byRegion[a]);
+  // region revenue & margin — every known region shown in canonical order
+  // (including ones with $0 in the current scope), each in its own color
+  const byRegion = {}, byRegionMargin = {};
+  scopeRows.forEach(r=>{ const rg=DATA.regions[r[R.rg]]; byRegion[rg]=(byRegion[rg]||0)+r[R.rev]; byRegionMargin[rg]=(byRegionMargin[rg]||0)+r[R.mgn]; });
+  const rLabels = allRegionsOrdered();
   mkChart('chRegion', {
     type:'bar',
-    data:{labels:rLabels, datasets:[{label:'Revenue',data:rLabels.map(l=>Math.round(byRegion[l])),backgroundColor:'rgba(217,165,33,.55)',borderRadius:5}]},
+    data:{labels:rLabels, datasets:[
+      {label:'Revenue',data:rLabels.map(l=>Math.round(byRegion[l]||0)),backgroundColor:rLabels.map(l=>hexToRgba(regionColor(l),.45)),borderRadius:5},
+      {label:'Margin',data:rLabels.map(l=>Math.round(byRegionMargin[l]||0)),backgroundColor:rLabels.map(l=>regionColor(l)),borderRadius:5}
+    ]},
     plugins:[ChartDataLabels],
-    options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{tooltip:tt,legend:{display:false},
-      datalabels:{color:'#EFEFEF',font:{weight:'700',size:10.5},anchor:'end',align:'end',offset:4,clip:false,formatter:v=>fmt$k(v)}},
-      layout:{padding:{right:36}},
+    options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{tooltip:tt,legend:{labels:{boxWidth:12,boxHeight:12}},
+      datalabels:{color:'#EFEFEF',font:{weight:'700',size:9.5},anchor:'end',align:'end',offset:4,clip:false,formatter:v=>v?fmt$k(v):''}},
+      layout:{padding:{right:40}},
       scales:{x:{ticks:{callback:v=>fmt$k(v)}}}}
   });
 }
@@ -2052,37 +2133,47 @@ function renderScorecard(){
 }
 
 /* ================= LANES ================= */
+/* Lanes are totalled by lane ONLY — one row per physical lane regardless of
+   how many brokers or customers ran it. Where more than one broker (or
+   customer) touched the lane, the column reads "Multiple"; the full list is
+   kept for the hover tooltip and for search matching. */
 function laneAggregate(rows){
   const map = {};
   rows.forEach(r=>{
     const lane = DATA.lanes[r[R.ln]];
-    const broker = DATA.brokers[r[R.br]];
-    const cust = DATA.custs[r[R.cu]];
-    const key = lane+'|'+broker+'|'+cust;
-    if(!map[key]) map[key] = {lane, broker, cust, n:0, rev:0, cost:0, margin:0, miles:0, kpis:[]};
-    const o = map[key];
+    // a lane has one destination, so its region is fixed — take it from the first row
+    if(!map[lane]) map[lane] = {lane, region:DATA.regions[r[R.rg]], brokers:new Set(), custs:new Set(), n:0, rev:0, cost:0, margin:0, miles:0, kpis:[]};
+    const o = map[lane];
+    o.brokers.add(DATA.brokers[r[R.br]]);
+    o.custs.add(DATA.custs[r[R.cu]]);
     o.n++; o.rev+=r[R.rev]; o.cost+=r[R.cost]; o.margin+=r[R.mgn]; o.miles+=r[R.mi];
     if(r[R.kpi]!==null && r[R.kpi]!==undefined) o.kpis.push(r[R.kpi]);
   });
-  return Object.values(map).map(o=>({
-    lane:o.lane, broker:o.broker, cust:o.cust, n:o.n,
-    avgRev:o.rev/o.n, avgCost:o.cost/o.n, marginLoad:o.margin/o.n, grossProfit:o.margin,
-    marginPct: o.rev? o.margin/o.rev : 0, avgMiles:o.miles/o.n,
-    revPerMile: o.miles ? o.rev/o.miles : 0, avgKpi: avgIgnoringNulls(o.kpis)
-  }));
+  return Object.values(map).map(o=>{
+    const brokerList = Array.from(o.brokers).sort();
+    const custList = Array.from(o.custs).sort();
+    return {
+      lane:o.lane, region:o.region, n:o.n,
+      broker: brokerList.length>1 ? 'Multiple' : brokerList[0],
+      cust: custList.length>1 ? 'Multiple' : custList[0],
+      brokerList, custList,
+      avgRev:o.rev/o.n, avgCost:o.cost/o.n, marginLoad:o.margin/o.n, grossProfit:o.margin,
+      marginPct: o.rev? o.margin/o.rev : 0, avgMiles:o.miles/o.n,
+      revPerMile: o.miles ? o.rev/o.miles : 0, avgKpi: avgIgnoringNulls(o.kpis)
+    };
+  });
 }
-/* Carrier breakdown per lane+broker+customer combo, for the click-to-expand
-   drill-down on the lane tables — mirrors the carrier→lane drill-down on
-   the Carriers tab, just the other direction. */
+/* Carrier breakdown per lane, for the click-to-expand drill-down on the
+   lane tables — mirrors the carrier→lane drill-down on the Carriers tab,
+   just the other direction. Keyed by lane alone, matching laneAggregate. */
 function laneCarrierBreakdown(rows){
   const map = {};
   rows.forEach(r=>{
-    const lane = DATA.lanes[r[R.ln]], broker = DATA.brokers[r[R.br]], cust = DATA.custs[r[R.cu]];
+    const lane = DATA.lanes[r[R.ln]];
     const carrier = DATA.carriers[r[R.ca]];
-    const key = lane+'|'+broker+'|'+cust;
-    if(!map[key]) map[key] = {};
-    if(!map[key][carrier]) map[key][carrier] = {carrier, n:0, rev:0, cost:0, margin:0, miles:0, lastShip:null, lowCost:Infinity, highCost:-Infinity, benchSum:0, benchN:0};
-    const o = map[key][carrier];
+    if(!map[lane]) map[lane] = {};
+    if(!map[lane][carrier]) map[lane][carrier] = {carrier, n:0, rev:0, cost:0, margin:0, miles:0, lastShip:null, lowCost:Infinity, highCost:-Infinity, benchSum:0, benchN:0};
+    const o = map[lane][carrier];
     o.n++; o.rev+=r[R.rev]; o.cost+=r[R.cost]; o.margin+=r[R.mgn]; o.miles+=r[R.mi];
     if(r[R.cost]<o.lowCost) o.lowCost = r[R.cost];
     if(r[R.cost]>o.highCost) o.highCost = r[R.cost];
@@ -2093,12 +2184,13 @@ function laneCarrierBreakdown(rows){
 }
 let laneRowSeq = 0;
 function laneRowHtml(l){
-  const key = l.lane+'|'+l.broker+'|'+l.cust;
+  const key = l.lane;
   const targetId = 'laneDetail'+(laneRowSeq++);
   return `<tr class="lane-row" data-key="${key.replace(/"/g,'&quot;')}" data-target="${targetId}">
     <td class="lane-name" title="${l.lane}"><span class="carrier-caret">▸</span>${l.lane}</td>
-    <td class="dim">${l.broker}</td>
-    <td class="dim">${titleCaseName(l.cust)}</td>
+    <td class="dim" title="${(l.brokerList||[]).join(', ').replace(/"/g,'&quot;')}">${l.broker}</td>
+    <td class="dim" title="${(l.custList||[]).map(titleCaseName).join(', ').replace(/"/g,'&quot;')}">${titleCaseName(l.cust)}</td>
+    <td><span class="chip region-chip" style="color:${regionColor(l.region)};background:${hexToRgba(regionColor(l.region),.14)}">${l.region||'—'}</span></td>
     <td class="r num">${l.n}</td>
     <td class="r num">${fmt$(l.avgRev)}</td>
     <td class="r num dim">${fmt$(l.avgCost)}</td>
@@ -2107,17 +2199,18 @@ function laneRowHtml(l){
     <td class="r num ${l.marginPct>=0?'pos':'neg'}">${fmtPct(l.marginPct)}</td>
     <td class="r num dim">${fmtNum(l.avgMiles)}</td>
     <td class="r num">$${l.revPerMile.toFixed(2)}</td></tr>
-    <tr class="detail-row hide" id="${targetId}"><td colspan="11"></td></tr>`;
+    <tr class="detail-row hide" id="${targetId}"><td colspan="12"></td></tr>`;
 }
 /* Same row shape as laneRowHtml, but the Margin % column is swapped for Avg
    KPI % — used only by the Bottom 10 by KPI % table. */
 function laneRowHtmlKpi(l){
-  const key = l.lane+'|'+l.broker+'|'+l.cust;
+  const key = l.lane;
   const targetId = 'laneDetail'+(laneRowSeq++);
   return `<tr class="lane-row" data-key="${key.replace(/"/g,'&quot;')}" data-target="${targetId}">
     <td class="lane-name" title="${l.lane}"><span class="carrier-caret">▸</span>${l.lane}</td>
-    <td class="dim">${l.broker}</td>
-    <td class="dim">${titleCaseName(l.cust)}</td>
+    <td class="dim" title="${(l.brokerList||[]).join(', ').replace(/"/g,'&quot;')}">${l.broker}</td>
+    <td class="dim" title="${(l.custList||[]).map(titleCaseName).join(', ').replace(/"/g,'&quot;')}">${titleCaseName(l.cust)}</td>
+    <td><span class="chip region-chip" style="color:${regionColor(l.region)};background:${hexToRgba(regionColor(l.region),.14)}">${l.region||'—'}</span></td>
     <td class="r num">${l.n}</td>
     <td class="r num">${fmt$(l.avgRev)}</td>
     <td class="r num dim">${fmt$(l.avgCost)}</td>
@@ -2126,7 +2219,7 @@ function laneRowHtmlKpi(l){
     <td class="r num ${l.avgKpi===null?'':(l.avgKpi>=0?'pos':'neg')}">${l.avgKpi===null?'—':l.avgKpi.toFixed(1)+'%'}</td>
     <td class="r num dim">${fmtNum(l.avgMiles)}</td>
     <td class="r num">$${l.revPerMile.toFixed(2)}</td></tr>
-    <tr class="detail-row hide" id="${targetId}"><td colspan="11"></td></tr>`;
+    <tr class="detail-row hide" id="${targetId}"><td colspan="12"></td></tr>`;
 }
 function renderLaneDetail(key, targetId){
   const carrierMap = (window.__laneCarrierMap || {})[key] || {};
@@ -2152,7 +2245,7 @@ function renderLaneDetail(key, targetId){
     <td class="r">${emailButtonHtml(c.carrier)}</td></tr>`;
   }).join('');
   const moreNote = carrierRows.length>15 ? `<div class="faint mt">+ ${carrierRows.length-15} more carrier${carrierRows.length-15===1?'':'s'} not shown</div>` : '';
-  const laneName = key.split('|')[0];
+  const laneName = key;
   cell.innerHTML = `<div class="detail-wrap">
     <div class="detail-title">Carriers used — ${laneName} — current filter scope · sorted by lowest avg cost</div>
     <table><thead><tr><th>Carrier</th><th class="r">Loads</th><th class="r">Avg Revenue/Load</th><th class="r">Avg Cost/Load</th>
@@ -2185,9 +2278,9 @@ function renderLanes(){
   // against market benchmark; lanes with no KPI data at all are excluded
   // (nothing to rank), same "min 2 loads" floor as the margin-based table
   const bottomKpi10 = laneAgg.filter(l=>l.n>=2 && l.avgKpi!==null).slice().sort((a,b)=>a.avgKpi-b.avgKpi).slice(0,10);
-  $('#tblTopLanes tbody').innerHTML = top15.map(laneRowHtml).join('') || `<tr><td colspan="11" class="empty-state">No data in scope</td></tr>`;
-  $('#tblBottomLanes tbody').innerHTML = bottom10.map(laneRowHtml).join('') || `<tr><td colspan="11" class="empty-state">No lanes with ≥2 loads in scope</td></tr>`;
-  $('#tblBottomKpiLanes tbody').innerHTML = bottomKpi10.map(laneRowHtmlKpi).join('') || `<tr><td colspan="11" class="empty-state">No lanes with ≥2 loads and KPI data in scope</td></tr>`;
+  $('#tblTopLanes tbody').innerHTML = top15.map(laneRowHtml).join('') || `<tr><td colspan="12" class="empty-state">No data in scope</td></tr>`;
+  $('#tblBottomLanes tbody').innerHTML = bottom10.map(laneRowHtml).join('') || `<tr><td colspan="12" class="empty-state">No lanes with ≥2 loads in scope</td></tr>`;
+  $('#tblBottomKpiLanes tbody').innerHTML = bottomKpi10.map(laneRowHtmlKpi).join('') || `<tr><td colspan="12" class="empty-state">No lanes with ≥2 loads and KPI data in scope</td></tr>`;
   wireLaneExpand('#tblTopLanes tbody');
   wireLaneExpand('#tblBottomLanes tbody');
   wireLaneExpand('#tblBottomKpiLanes tbody');
@@ -2198,21 +2291,23 @@ function renderLanes(){
 function renderLaneSearch(){
   const q = ($('#laneSearch').value||'').toLowerCase().trim();
   let arr = window.__laneAggAll || [];
-  if(q) arr = arr.filter(l=> l.lane.toLowerCase().includes(q) || l.broker.toLowerCase().includes(q) || l.cust.toLowerCase().includes(q));
+  // region is searchable too, so typing "Canada" or "Midwest" narrows the list
+  if(q) arr = arr.filter(l=> l.lane.toLowerCase().includes(q) || (l.brokerList||[l.broker]).some(b=>b.toLowerCase().includes(q)) || (l.custList||[l.cust]).some(c=>c.toLowerCase().includes(q)) || (l.region||'').toLowerCase().includes(q));
   // sorted by margin per load, highest to lowest
   arr = arr.slice().sort((a,b)=>b.marginLoad-a.marginLoad).slice(0,200);
   $('#tblAllLanes tbody').innerHTML = arr.map(l=>{
-    const key = l.lane+'|'+l.broker+'|'+l.cust;
+    const key = l.lane;
     const targetId = 'laneDetail'+(laneRowSeq++);
     return `<tr class="lane-row" data-key="${key.replace(/"/g,'&quot;')}" data-target="${targetId}">
-    <td class="lane-name" title="${l.lane}"><span class="carrier-caret">▸</span>${l.lane}</td><td class="dim">${l.broker}</td><td class="dim">${titleCaseName(l.cust)}</td>
+    <td class="lane-name" title="${l.lane}"><span class="carrier-caret">▸</span>${l.lane}</td><td class="dim" title="${(l.brokerList||[]).join(', ').replace(/"/g,'&quot;')}">${l.broker}</td><td class="dim" title="${(l.custList||[]).map(titleCaseName).join(', ').replace(/"/g,'&quot;')}">${titleCaseName(l.cust)}</td>
+    <td><span class="chip region-chip" style="color:${regionColor(l.region)};background:${hexToRgba(regionColor(l.region),.14)}">${l.region||'—'}</span></td>
     <td class="r num">${l.n}</td><td class="r num">${fmt$(l.avgRev)}</td>
     <td class="r num ${l.marginLoad>=0?'':'neg'}">${fmt$(l.marginLoad)}</td>
     <td class="r num ${l.marginPct>=0?'pos':'neg'}">${fmtPct(l.marginPct)}</td>
     <td class="r num dim">${fmtNum(l.avgMiles)}</td><td class="r num">$${l.revPerMile.toFixed(2)}</td></tr>
-    <tr class="detail-row hide" id="${targetId}"><td colspan="9"></td></tr>`;
+    <tr class="detail-row hide" id="${targetId}"><td colspan="10"></td></tr>`;
   }).join('')
-    || `<tr><td colspan="9" class="empty-state">No matching lanes</td></tr>`;
+    || `<tr><td colspan="10" class="empty-state">No matching lanes</td></tr>`;
   wireLaneExpand('#tblAllLanes tbody');
   $('#laneSearchNote').textContent = `Showing ${Math.min(arr.length,200)} of ${(window.__laneAggAll||[]).length} lanes in scope${q?' matching “'+q+'”':''}`;
 }
