@@ -352,6 +352,15 @@ tr.detail-row td{padding:0;border-bottom:1px solid rgba(46,46,51,.55)}
       </div>
     </div>
   </div>
+  <div class="filter-group"><label>Group</label>
+    <div class="msel" id="mselGroup" data-key="group">
+      <button type="button" class="msel-btn"><span class="msel-btn-label">All</span><span class="msel-caret">▾</span></button>
+      <div class="msel-panel hide">
+        <label class="msel-all-row"><input type="checkbox" class="msel-all-cb"><span>All</span></label>
+        <div class="msel-options"></div>
+      </div>
+    </div>
+  </div>
   <div class="filter-group"><label>Region</label>
     <div class="msel" id="mselRegion" data-key="region">
       <button type="button" class="msel-btn"><span class="msel-btn-label">All</span><span class="msel-caret">▾</span></button>
@@ -448,16 +457,25 @@ tr.detail-row td{padding:0;border-bottom:1px solid rgba(46,46,51,.55)}
       </div>
       <div class="table-scroll"><table id="tblScorecard"><thead>
         <tr>
-          <th colspan="10"></th>
+          <th colspan="11"></th>
           <th colspan="2" class="group-header">Market Comparison</th>
         </tr>
         <tr>
         <th data-k="broker">Broker</th><th class="r" data-k="loads">Loads</th><th class="r" data-k="revenue">Revenue</th>
-        <th class="r" data-k="cost">Carrier Cost</th><th class="r" data-k="margin">Margin $</th><th class="r" data-k="marginPct">Margin %</th>
+        <th class="r" data-k="cost">Carrier Cost</th><th class="r" data-k="margin">Margin $</th><th class="r" data-k="corpMargin">Corporate Margin $</th><th class="r" data-k="marginPct">Margin %</th>
         <th class="r" data-k="revLoad">Rev/Load</th><th class="r" data-k="costLoad">Cost/Load</th>
         <th class="r" data-k="marginLoad">Margin/Load</th><th class="r" data-k="pctLoads">% Loads</th>
         <th class="r market-col market-col-start" data-k="avgRateDiff">Carrier Pay Diff</th><th class="r market-col" data-k="avgKpi">Avg KPI</th>
       </tr></thead><tbody></tbody></table></div>
+    </div>
+    <div class="card mt">
+      <div class="card-h">
+        <div class="card-h-text">
+          <span class="eyebrow">Margin by group — full vs. Corporate</span>
+          <span class="card-note">Margin = full gross margin · Corporate Margin = what North Star actually retains (100% NS Corporate, 40% Agent &amp; TFL)</span>
+        </div>
+      </div>
+      <div class="chart-wrap"><canvas id="chGroupMargin"></canvas></div>
     </div>
     <div class="grid row-2 mt">
       <div class="card">
@@ -709,6 +727,7 @@ const TAB_RAW_DATA = 'Raw Data';
 const TAB_CARRIER_DATA = 'Carrier Data';
 const TAB_REGION_MAP = 'Region';
 const TAB_CARRIER_EMAILS = 'Carrier';
+const TAB_TFL_DATA = 'TFL Data';
 function gvizCsvUrl(tabName){
   return `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(tabName)}`;
 }
@@ -829,7 +848,13 @@ function titleCaseName(str){
 }
 
 /* Row layout: [wk, brokerIdx, regionIdx, custIdx, laneIdx, carrierIdx, miles, rev, cost, margin, shipDate] */
-const R = {wk:0,br:1,rg:2,cu:3,ln:4,ca:5,mi:6,rev:7,cost:8,mgn:9,sd:10,rd:11,kpi:12,dow:13,bench:14};
+/* grp = which business group this shipment belongs to (NS Corporate / Agent
+   / TFL) — index into DATA.groups. cmgn = Corporate Margin, the $ amount
+   North Star actually retains: full Margin for NS Corporate rows, 40% of
+   Margin for Agent and TFL rows (TFL rows use the sheet's own TFL Margin
+   column for precision; Agent uses a flat 40% since there's no equivalent
+   split column in Raw Data). */
+const R = {wk:0,br:1,rg:2,cu:3,ln:4,ca:5,mi:6,rev:7,cost:8,mgn:9,sd:10,rd:11,kpi:12,dow:13,bench:14,grp:15,cmgn:16};
 
 function parseDate(s){return new Date(s+'T00:00:00')}
 function addDays(d,n){const r=new Date(d);r.setDate(r.getDate()+n);return r}
@@ -1011,12 +1036,14 @@ function buildCarrierEmailMap(carrierEmailRows){
   });
   return result;
 }
-function buildDataFromSheetRows(rawRows, regionMap){
-  const brokers=[], regions=[], custs=[], lanes=[], carriers=[];
+function buildDataFromSheetRows(rawRows, tflRawRows, regionMap){
+  const brokers=[], regions=[], custs=[], lanes=[], carriers=[], groups=[];
   const enc = (lst, v) => { if(!lst.includes(v)) lst.push(v); return lst.indexOf(v); };
   const rowsOut = [];
   let regionMapHits = 0, regionMapMisses = 0;
   let skippedNoRevenue = 0, skippedNoDeliveryDate = 0;
+
+  // ---- Raw Data tab: NS Corporate (Michael/Sandra/Kade) + Agent ----
   rawRows.forEach(row=>{
     const rev = toNum(row['Total Customer Revenue']);
     if(rev===null){ skippedNoRevenue++; return; }
@@ -1029,7 +1056,8 @@ function buildDataFromSheetRows(rawRows, regionMap){
     const wkStr = saturdayOfWeek(deliveryDateStr);
     const dow = parseDate(deliveryDateStr).getDay(); // 0=Sun...6=Sat, used to check week completeness
     const shipDate = toDateStr(row['Pickup Actual Arrival']) || wkStr;
-    const b = enc(brokers, (row['Broker']||'Unknown').trim());
+    const brokerName = (row['Broker']||'Unknown').trim();
+    const b = enc(brokers, brokerName);
     // Prefer the Destination State → Region mapping tab when available; fall
     // back to whatever's already in the Raw Data Region column, then 'Other'.
     const destState = (row['Destination State']||'').trim().toUpperCase();
@@ -1047,25 +1075,86 @@ function buildDataFromSheetRows(rawRows, regionMap){
     // regardless of what's actually in those cells (don't rely on the cells
     // being blank; a stray 0 in the sheet would otherwise get treated as a
     // real value, not "no data").
-    const isAgent = (row['Broker']||'').trim() === 'Agent';
+    const isAgent = brokerName === 'Agent';
     const rateDiff = isAgent ? null : toNum(row['Rate Diff']);
     const kpi = isAgent ? null : toPercent(row['KPI']);
     const benchmark = isAgent ? null : toNum(row['Benchmark']);
+    const margin = Math.round((toNum(row['Margin Revenue'])||0)*100)/100;
+    // Corporate Margin — what North Star actually retains. Full margin for
+    // NS Corporate brokers; Agent runs on the same 40%-retained override
+    // arrangement as TFL, just with no separate split column to read from
+    // Raw Data, so it's a flat 40% here.
+    const groupName = isAgent ? 'Agent' : 'NS Corporate';
+    const grp = enc(groups, groupName);
+    const corpMargin = isAgent ? Math.round(margin*0.4*100)/100 : margin;
     rowsOut.push([
       wkStr, b, rg, cu, ln, ca,
       Math.round(miles)||0,
       Math.round(rev*100)/100,
       Math.round((toNum(row['Carrier Pay'])||0)*100)/100,
-      Math.round((toNum(row['Margin Revenue'])||0)*100)/100,
+      margin,
       shipDate,
       rateDiff===null ? null : Math.round(rateDiff*100)/100,
       kpi===null ? null : Math.round(kpi*100)/100,
       dow,
-      benchmark===null ? null : Math.round(benchmark*100)/100
+      benchmark===null ? null : Math.round(benchmark*100)/100,
+      grp,
+      corpMargin
     ]);
   });
+
+  // ---- TFL Data tab: TFL (TransFusion Logistics), an agent of North Star ----
+  // Different column layout than Raw Data — Origin/Dest are separate
+  // city+state pairs (combined into the same "City, ST → City, ST" lane
+  // format used everywhere else), "% Rate Diff" fills the KPI role (the
+  // sheet's own KPI column is blank), and Del Date drives week-bucketing the
+  // same way Delivery Actual Arrival does for Raw Data.
+  (tflRawRows||[]).forEach(row=>{
+    const rev = toNum(row['Total Rev']);
+    if(rev===null){ skippedNoRevenue++; return; }
+    const delDateStr = toDateStr(row['Del Date']);
+    if(!delDateStr){ skippedNoDeliveryDate++; return; }
+    const wkStr = saturdayOfWeek(delDateStr);
+    const dow = parseDate(delDateStr).getDay();
+    const b = enc(brokers, (row['Broker']||'Unknown').trim());
+    const destState = (row['D ST']||'').trim().toUpperCase();
+    const regionVal = (regionMap && destState && regionMap[destState]) || 'Other';
+    if(regionMap && Object.keys(regionMap).length){
+      if(destState && regionMap[destState]) regionMapHits++; else regionMapMisses++;
+    }
+    const rg = enc(regions, regionVal);
+    const cu = enc(custs, (row['Customer']||'Unknown').trim());
+    const laneStr = `${(row['Origin']||'').trim()}, ${(row['O ST']||'').trim()} → ${(row['Dest']||'').trim()}, ${(row['D ST']||'').trim()}`;
+    const ln = enc(lanes, laneStr);
+    const ca = enc(carriers, (row['Carrier']||'Unknown').trim());
+    const miles = toMiles(row['Miles']);
+    const cost = toNum(row['Total Carrier Pay']) || 0;
+    const marginRaw = toNum(row['Margin']);
+    const margin = Math.round((marginRaw===null ? (rev-cost) : marginRaw)*100)/100;
+    const rateDiff = toNum(row['Rate Diff']);
+    const kpi = toPercent(row['% Rate Diff']);
+    const benchmark = toNum(row['Benchmark Rate']);
+    const tflMarginCol = toNum(row['TFL Margin']);
+    const corpMargin = tflMarginCol!==null ? Math.round((margin-tflMarginCol)*100)/100 : Math.round(margin*0.4*100)/100;
+    const grp = enc(groups, 'TFL');
+    rowsOut.push([
+      wkStr, b, rg, cu, ln, ca,
+      Math.round(miles)||0,
+      Math.round(rev*100)/100,
+      Math.round(cost*100)/100,
+      margin,
+      delDateStr,
+      rateDiff===null ? null : Math.round(rateDiff*100)/100,
+      kpi===null ? null : Math.round(kpi*100)/100,
+      dow,
+      benchmark===null ? null : Math.round(benchmark*100)/100,
+      grp,
+      corpMargin
+    ]);
+  });
+
   rowsOut.sort((a,b)=>a[0]<b[0]?-1:a[0]>b[0]?1:0);
-  return {brokers, regions, custs, lanes, carriers, rows:rowsOut, regionMapHits, regionMapMisses, skippedNoRevenue, skippedNoDeliveryDate, totalRawRows: rawRows.length};
+  return {brokers, regions, custs, lanes, carriers, groups, rows:rowsOut, regionMapHits, regionMapMisses, skippedNoRevenue, skippedNoDeliveryDate, totalRawRows: rawRows.length + (tflRawRows?tflRawRows.length:0)};
 }
 
 function setLiveStatus(mode, text){
@@ -1103,10 +1192,15 @@ async function loadFromGoogleSheets(){
     let carrierEmailRows = [];
     try{ carrierEmailRows = await fetchCsv(gvizCsvUrl(TAB_CARRIER_EMAILS)); }
     catch(e){ console.warn('Carrier email tab not loaded, Email buttons will be hidden:', e.message); }
+    // TFL Data tab is also optional — if it's missing/misnamed/fails, the
+    // dashboard still works fine with just NS Corporate + Agent data.
+    let tflRows = [];
+    try{ tflRows = await fetchCsv(gvizCsvUrl(TAB_TFL_DATA)); }
+    catch(e){ console.warn('TFL Data tab not loaded, TFL group will be empty:', e.message); }
     const carrierEmailResult = buildCarrierEmailMap(carrierEmailRows);
     CARRIER_EMAILS = carrierEmailResult.map;
     const regionMap = buildRegionMap(regionRows);
-    const built = buildDataFromSheetRows(rawRows, regionMap);
+    const built = buildDataFromSheetRows(rawRows, tflRows, regionMap);
     if(built.rows.length===0){
       throw new Error('Connected, but found 0 usable rows — check that the "Total Customer Revenue" and "Delivery Actual Arrival" columns are filled in on the Raw Data tab.');
     }
@@ -1117,10 +1211,12 @@ async function loadFromGoogleSheets(){
     if(DATA.rows.length===0){
       throw new Error(`Connected and found ${fmtNum(rowsBeforeTrailingFilter)} usable row(s), but every one of them fell inside the most recent week, which doesn't have a delivery recorded on all 7 days yet — so nothing is left to show. This will resolve itself as more of the week's deliveries come in.`);
     }
-    // default to excluding Agent, same as before — but now as an explicit
-    // selection list rather than a special sentinel value, so it behaves
-    // like any other multi-select filter
-    state.broker = DATA.brokers.filter(b=>b!=='Agent');
+    // Default to NS Corporate only — Agent and TFL stay hidden until
+    // explicitly selected via the Group filter, same spirit as the old
+    // "exclude Agent by default" behavior, just extended to the new TFL
+    // group. Broker itself is left unrestricted so switching Group later
+    // naturally surfaces whichever brokers/reps belong to it.
+    state.group = ['NS Corporate'];
     buildOptions();
     const lastWk = DATA.rows[DATA.rows.length-1][R.wk];
     const now = new Date();
@@ -1141,6 +1237,7 @@ async function loadFromGoogleSheets(){
         emailNote += ` (columns seen: ${carrierEmailResult.columnsSeen.join(', ')} — detected name col: ${carrierEmailResult.nameCol||'none'}, email col: ${carrierEmailResult.emailCol||'none'})`;
       }
     }
+    const tflNote = tflRows.length ? ` · TFL: ${fmtNum(tflRows.length)} rows loaded` : '';
     // Loud warning, not just a footnote — if a meaningful chunk of rows are
     // missing a Delivery Actual Arrival value, they're silently excluded
     // from every chart/table on the dashboard, not just the weekly ones.
@@ -1153,7 +1250,7 @@ async function loadFromGoogleSheets(){
     }
     const skipNote = built.skippedNoDeliveryDate>0 ? ` · ${fmtNum(built.skippedNoDeliveryDate)} rows excluded (no delivery date)` : '';
     const trailingNote = trailingWeekExcluded ? ` · week of ${weekEndingLabel(trailingWeekExcluded.wk)} excluded (only ${trailingWeekExcluded.daysPresent}/7 days in so far)` : '';
-    setLiveStatus('ok', `Live from Google Sheets · week ending ${weCache[lastWk]} · refreshed ${now.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}${mapNote}${skipNote}${trailingNote}${emailNote}`);
+    setLiveStatus('ok', `Live from Google Sheets · week ending ${weCache[lastWk]} · refreshed ${now.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}${mapNote}${skipNote}${trailingNote}${emailNote}${tflNote}`);
     $('#controlsRow').classList.remove('hide');
     $('#tabsNav').classList.remove('hide');
     $('#mainRoot').classList.remove('hide');
@@ -1190,7 +1287,7 @@ $('#refreshBtn').addEventListener('click', loadFromGoogleSheets);
    independent filter dimensions — the Date filter is a single tiered
    Quarter > Month > Week Ending tree that all ultimately resolve to
    weekEnding, the finest-grained (and only) date filter applied. */
-const state = { cust:null, broker:null, region:null, weekEnding:null };
+const state = { cust:null, broker:null, region:null, weekEnding:null, group:null };
 
 function uniqueSorted(arr){ return Array.from(new Set(arr)); }
 
@@ -1199,10 +1296,15 @@ function buildOptions(){
   const custOpts = DATA.custs.slice().sort();
   const brokerOpts = DATA.brokers.slice().sort();
   const regionOpts = DATA.regions.slice().sort();
+  // fixed business-meaningful order rather than alphabetical, and only
+  // includes groups actually present in the data (e.g. if the TFL Data tab
+  // didn't load, "TFL" just won't show up as an option)
+  const groupOpts = ['NS Corporate','Agent','TFL'].filter(g=>DATA.groups.includes(g));
 
   initMultiSelect('mselCust', 'cust', custOpts, titleCaseName);
   initMultiSelect('mselBroker', 'broker', brokerOpts);
   initMultiSelect('mselRegion', 'region', regionOpts);
+  initMultiSelect('mselGroup', 'group', groupOpts);
   initDateTree();
 }
 
@@ -1436,11 +1538,12 @@ document.addEventListener('click', ()=>{
 });
 
 /* ================= FILTERING ================= */
-function filteredRows({useBroker=true, useWeekEnding=true, useRegion=true, useCust=true}={}){
+function filteredRows({useBroker=true, useWeekEnding=true, useRegion=true, useCust=true, useGroup=true}={}){
   return DATA.rows.filter(r=>{
     if(useCust && state.cust!==null && !state.cust.includes(DATA.custs[r[R.cu]])) return false;
     if(useBroker && state.broker!==null && !state.broker.includes(DATA.brokers[r[R.br]])) return false;
     if(useRegion && state.region!==null && !state.region.includes(DATA.regions[r[R.rg]])) return false;
+    if(useGroup && state.group!==null && !state.group.includes(DATA.groups[r[R.grp]])) return false;
     if(useWeekEnding && state.weekEnding!==null && !state.weekEnding.includes(weCache[r[R.wk]])) return false;
     return true;
   });
@@ -1583,6 +1686,7 @@ function renderOverview(){
   const describeSel = (sel, displayFn) => sel.length<=2 ? sel.map(displayFn||(x=>x)).join(', ') : sel.length+' selected';
   if(state.cust!==null) scopeParts.push('Customer: '+describeSel(state.cust, titleCaseName));
   if(state.broker!==null) scopeParts.push('Broker: '+describeSel(state.broker));
+  if(state.group!==null) scopeParts.push('Group: '+describeSel(state.group));
   if(state.region!==null) scopeParts.push('Region: '+describeSel(state.region));
   if(state.weekEnding!==null) scopeParts.push('Date: '+describeSel(state.weekEnding));
   $('#scopeNote').textContent = scopeParts.length ? 'Filtered — '+scopeParts.join(' · ') : 'Showing all data, non-agent brokers';
@@ -1748,15 +1852,15 @@ function avgIgnoringNulls(values){
 }
 /* ================= RENDER: SCORECARD ================= */
 function renderScorecard(){
-  // respects cust/region/month/weekEnding, NOT broker filter — all brokers shown
+  // respects cust/region/month/weekEnding/group, NOT broker filter — all brokers shown
   const rows = filteredRows({useBroker:false});
   const t = totals(rows);
   const byBroker = {};
   rows.forEach(r=>{
     const b = DATA.brokers[r[R.br]];
-    if(!byBroker[b]) byBroker[b] = {broker:b, loads:0, revenue:0, cost:0, margin:0, rateDiffs:[], kpis:[]};
+    if(!byBroker[b]) byBroker[b] = {broker:b, loads:0, revenue:0, cost:0, margin:0, corpMargin:0, rateDiffs:[], kpis:[]};
     const o = byBroker[b];
-    o.loads++; o.revenue+=r[R.rev]; o.cost+=r[R.cost]; o.margin+=r[R.mgn];
+    o.loads++; o.revenue+=r[R.rev]; o.cost+=r[R.cost]; o.margin+=r[R.mgn]; o.corpMargin+=r[R.cmgn];
     o.rateDiffs.push(r[R.rd]); o.kpis.push(r[R.kpi]);
   });
   // Diagnostic — logs the exact raw KPI values feeding each broker's average
@@ -1787,6 +1891,7 @@ function renderScorecard(){
     <td class="r num">${fmt$(o.revenue)}</td>
     <td class="r num dim">${fmt$(o.cost)}</td>
     <td class="r num gold-txt mono-strong">${fmt$(o.margin)}</td>
+    <td class="r num gold-txt">${fmt$(o.corpMargin)}</td>
     <td class="r num">${fmtPct(o.marginPct)}</td>
     <td class="r num">${fmt$(o.revLoad)}</td>
     <td class="r num dim">${fmt$(o.costLoad)}</td>
@@ -1796,13 +1901,14 @@ function renderScorecard(){
     <td class="r num market-col">${o.avgKpi===null?'—':o.avgKpi.toFixed(1)+'%'}</td></tr>`).join('');
   const totalRateDiff = avgIgnoringNulls(arr.flatMap(o=>o.rateDiffs));
   const totalKpi = avgIgnoringNulls(arr.flatMap(o=>o.kpis));
+  const totalCorpMargin = arr.reduce((s,o)=>s+o.corpMargin,0);
   const totalRow = `<tr class="totals"><td>Totals</td><td class="r num">${fmtNum(t.n)}</td><td class="r num">${fmt$(t.rev)}</td>
-    <td class="r num">${fmt$(t.cost)}</td><td class="r num gold-txt">${fmt$(t.margin)}</td><td class="r num">${fmtPct(t.marginPct)}</td>
+    <td class="r num">${fmt$(t.cost)}</td><td class="r num gold-txt">${fmt$(t.margin)}</td><td class="r num gold-txt">${fmt$(totalCorpMargin)}</td><td class="r num">${fmtPct(t.marginPct)}</td>
     <td class="r num">${t.n?fmt$(t.rev/t.n):'—'}</td><td class="r num">${t.n?fmt$(t.cost/t.n):'—'}</td>
     <td class="r num">${t.n?fmt$(t.margin/t.n):'—'}</td><td class="r num">100.0%</td>
     <td class="r num market-col market-col-start">${totalRateDiff===null?'—':fmt$(totalRateDiff)}</td>
     <td class="r num market-col">${totalKpi===null?'—':totalKpi.toFixed(1)+'%'}</td></tr>`;
-  $('#tblScorecard tbody').innerHTML = (rowHtml || `<tr><td colspan="12" class="empty-state">No data in scope</td></tr>`) + (arr.length?totalRow:'');
+  $('#tblScorecard tbody').innerHTML = (rowHtml || `<tr><td colspan="13" class="empty-state">No data in scope</td></tr>`) + (arr.length?totalRow:'');
 
   // For the Margin $/Margin % charts specifically, Agent is pushed to the
   // rightmost bar regardless of its load volume — keeps the 3 main brokers
@@ -1814,6 +1920,33 @@ function renderScorecard(){
     if(b.broker==='Agent') return -1;
     return 0;
   });
+  // Margin by group — deliberately ignores the Group filter itself (like the
+  // main table ignores Broker) so all 3 groups are always visible side by
+  // side for comparison, regardless of what's currently selected above.
+  const groupRows = filteredRows({useBroker:false, useGroup:false});
+  const byGroup = {};
+  groupRows.forEach(r=>{
+    const g = DATA.groups[r[R.grp]];
+    if(!byGroup[g]) byGroup[g] = {group:g, margin:0, corpMargin:0};
+    byGroup[g].margin += r[R.mgn];
+    byGroup[g].corpMargin += r[R.cmgn];
+  });
+  const groupOrder = ['NS Corporate','Agent','TFL'].filter(g=>byGroup[g]);
+  const groupColors = {'NS Corporate':'#D9A521','Agent':'#BA0F24','TFL':'#5B8FD6'};
+  mkChart('chGroupMargin', {
+    type:'bar',
+    data:{labels:groupOrder, datasets:[
+      {label:'Margin (full)',data:groupOrder.map(g=>Math.round(byGroup[g].margin)),backgroundColor:groupOrder.map(g=>hexToRgba(groupColors[g],.5)),borderRadius:5},
+      {label:'Corporate Margin',data:groupOrder.map(g=>Math.round(byGroup[g].corpMargin)),backgroundColor:groupOrder.map(g=>groupColors[g]),borderRadius:5}
+    ]},
+    plugins:[ChartDataLabels],
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{tooltip:tt,legend:{labels:{boxWidth:12,boxHeight:12}},
+        datalabels:{color:'#EFEFEF',font:{weight:'700',size:10.5},anchor:'end',align:'end',offset:2,clip:false,formatter:v=>fmt$k(v)}},
+      layout:{padding:{top:20}},
+      scales:{y:{ticks:{callback:v=>fmt$k(v)}}}}
+  });
+
   mkChart('chScorecardMargin', {
     type:'bar',
     data:{labels:chartArr.map(o=>o.broker), datasets:[{label:'Margin $',data:chartArr.map(o=>Math.round(o.margin)),backgroundColor:chartArr.map(o=>brokerColor(o.broker)),borderRadius:5}]},
@@ -2650,8 +2783,9 @@ function renderAll(){
 }
 
 $('#resetBtn').addEventListener('click', ()=>{
-  state.cust=null; state.broker=DATA ? DATA.brokers.filter(b=>b!=='Agent') : null; state.region=null; state.weekEnding=null;
-  ['mselCust','mselBroker','mselRegion'].forEach(id=>renderMultiSelectOptions(id));
+  state.cust=null; state.broker=null; state.region=null; state.weekEnding=null;
+  state.group = DATA ? ['NS Corporate'] : null;
+  ['mselCust','mselBroker','mselRegion','mselGroup'].forEach(id=>renderMultiSelectOptions(id));
   renderDateTreePanel();
   renderAll();
 });
