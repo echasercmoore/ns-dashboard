@@ -271,6 +271,12 @@ th.r,td.r{text-align:right}
 .chip-red{color:#F27281;background:var(--red-soft)}
 .chip-blue{color:var(--blue);background:rgba(91,143,214,.14)}
 .region-chip{font-size:10px;padding:2px 8px;white-space:nowrap}
+.date-row{display:flex;align-items:stretch;gap:6px}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--midnight-2)}
+.seg-btn{background:transparent;border:0;color:var(--silver-dim);font-family:var(--font-body);font-size:11.5px;font-weight:700;padding:0 11px;cursor:pointer;transition:background .15s,color .15s;white-space:nowrap}
+.seg-btn+.seg-btn{border-left:1px solid var(--line)}
+.seg-btn:hover{color:var(--silver)}
+.seg-btn.active{background:var(--gold);color:#0B0B0C}
 .lane-search-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .lane-search-row .searchbox{min-width:170px}
 .lane-search-arrow{color:var(--silver-faint);font-size:14px;flex-shrink:0}
@@ -357,20 +363,11 @@ tr.detail-row td{padding:0;border-bottom:1px solid rgba(46,46,51,.55)}
     </div>
   </div>
   <div class="filter-group"><label>Broker</label>
-    <div class="msel" id="mselBroker" data-key="broker">
+    <div class="msel dtree" id="mselBroker">
       <button type="button" class="msel-btn"><span class="msel-btn-label">All</span><span class="msel-caret">▾</span></button>
       <div class="msel-panel hide">
         <label class="msel-all-row"><input type="checkbox" class="msel-all-cb"><span>All</span></label>
-        <div class="msel-options"></div>
-      </div>
-    </div>
-  </div>
-  <div class="filter-group"><label>Group</label>
-    <div class="msel" id="mselGroup" data-key="group">
-      <button type="button" class="msel-btn"><span class="msel-btn-label">All</span><span class="msel-caret">▾</span></button>
-      <div class="msel-panel hide">
-        <label class="msel-all-row"><input type="checkbox" class="msel-all-cb"><span>All</span></label>
-        <div class="msel-options"></div>
+        <div class="dtree-options"></div>
       </div>
     </div>
   </div>
@@ -384,12 +381,18 @@ tr.detail-row td{padding:0;border-bottom:1px solid rgba(46,46,51,.55)}
     </div>
   </div>
   <div class="filter-group"><label>Date</label>
+    <div class="date-row">
     <div class="msel dtree" id="mselDate">
       <button type="button" class="msel-btn"><span class="msel-btn-label">All</span><span class="msel-caret">▾</span></button>
       <div class="msel-panel hide">
         <label class="msel-all-row"><input type="checkbox" class="msel-all-cb"><span>All</span></label>
         <div class="dtree-options"></div>
       </div>
+    </div>
+    <div class="seg" id="granToggle" title="Bucket every trend chart, sparkline and trend badge by week or by month">
+      <button type="button" class="seg-btn active" data-gran="week">Weekly</button>
+      <button type="button" class="seg-btn" data-gran="month">Monthly</button>
+    </div>
     </div>
   </div>
   <button class="btn btn-reset" id="resetBtn">Reset filters</button>
@@ -636,7 +639,7 @@ tr.detail-row td{padding:0;border-bottom:1px solid rgba(46,46,51,.55)}
     </div>
     <div class="grid row-2 mt">
       <div class="card">
-        <div class="card-h"><span class="eyebrow">New carriers added per week</span>
+        <div class="card-h"><span class="eyebrow" id="newCarriersTitle">New carriers added per week</span>
           <span class="card-note">First-ever shipment, excludes baseline carriers · respects Customer, Broker, Region &amp; Month filters</span></div>
         <div class="chart-wrap tall"><canvas id="chNewCarriers"></canvas></div>
       </div>
@@ -1301,7 +1304,7 @@ async function loadFromGoogleSheets(){
     // "exclude Agent by default" behavior, just extended to the new TFL
     // group. Broker itself is left unrestricted so switching Group later
     // naturally surfaces whichever brokers/reps belong to it.
-    state.group = ['NS Corporate'];
+    state.broker = DATA.brokers.filter(b=>brokerGroupOf(b)==='NS Corporate');
     buildOptions();
     const lastWk = DATA.rows[DATA.rows.length-1][R.wk];
     const now = new Date();
@@ -1372,7 +1375,7 @@ $('#refreshBtn').addEventListener('click', loadFromGoogleSheets);
    independent filter dimensions — the Date filter is a single tiered
    Quarter > Month > Week Ending tree that all ultimately resolve to
    weekEnding, the finest-grained (and only) date filter applied. */
-const state = { cust:null, broker:null, region:null, weekEnding:null, group:null };
+const state = { cust:null, broker:null, region:null, weekEnding:null };
 
 function uniqueSorted(arr){ return Array.from(new Set(arr)); }
 
@@ -1380,18 +1383,138 @@ function uniqueSorted(arr){ return Array.from(new Set(arr)); }
 function buildOptions(){
   assignBrokerColors();
   const custOpts = DATA.custs.slice().sort();
-  const brokerOpts = DATA.brokers.slice().sort();
   const regionOpts = allRegionsOrdered();
-  // fixed business-meaningful order rather than alphabetical, and only
-  // includes groups actually present in the data (e.g. if the TFL Data tab
-  // didn't load, "TFL" just won't show up as an option)
-  const groupOpts = ['NS Corporate','Agent','TFL'].filter(g=>DATA.groups.includes(g));
 
   initMultiSelect('mselCust', 'cust', custOpts, titleCaseName);
-  initMultiSelect('mselBroker', 'broker', brokerOpts);
+  initBrokerTree();
   initMultiSelect('mselRegion', 'region', regionOpts);
-  initMultiSelect('mselGroup', 'group', groupOpts);
   initDateTree();
+}
+
+/* ================= BROKER TREE FILTER (Group > Broker) ================= */
+/* One tiered filter replacing the old separate Group and Broker selects.
+   Each broker belongs to exactly one group (NS Corporate / Agent / TFL);
+   checking a group checks all its brokers, and individual brokers can be
+   toggled underneath. state.broker (null = All, or an array of broker
+   names) is the single source of truth — group membership is derived. */
+const GROUP_ORDER = ['NS Corporate','Agent','TFL'];
+let brokerTreeData = { groupOrder: [], tree: {}, allBrokers: [], brokerGroup: {} };
+let brokerTreeExpanded = new Set();
+function brokerGroupOf(name){
+  // lazily build the hierarchy if it hasn't been yet (defaults are set
+  // before buildOptions() runs on load)
+  if(DATA && !brokerTreeData.allBrokers.length) buildBrokerHierarchy();
+  return brokerTreeData.brokerGroup[name] || 'NS Corporate';
+}
+function buildBrokerHierarchy(){
+  const brokerGroup = {};
+  DATA.rows.forEach(r=>{ const b = DATA.brokers[r[R.br]]; if(!(b in brokerGroup)) brokerGroup[b] = DATA.groups[r[R.grp]]; });
+  const tree = {};
+  Object.keys(brokerGroup).forEach(b=>{ const g = brokerGroup[b]; (tree[g] = tree[g] || []).push(b); });
+  // "Other" sorts last within its group; everyone else alphabetical
+  Object.values(tree).forEach(list=>list.sort((a,b)=> a==='Other' ? 1 : b==='Other' ? -1 : a.localeCompare(b)));
+  const groupOrder = GROUP_ORDER.filter(g=>tree[g]).concat(Object.keys(tree).filter(g=>!GROUP_ORDER.includes(g)).sort());
+  const allBrokers = groupOrder.flatMap(g=>tree[g]);
+  brokerTreeData = { groupOrder, tree, allBrokers, brokerGroup };
+}
+function describeBrokerSel(){
+  const sel = state.broker;
+  if(sel===null) return 'All';
+  if(!sel.length) return 'None';
+  const set = new Set(sel);
+  // whole groups fully checked read as the group name; loose brokers listed
+  const parts = [];
+  let loose = [];
+  brokerTreeData.groupOrder.forEach(g=>{
+    const members = brokerTreeData.tree[g];
+    if(members.every(b=>set.has(b))) parts.push(g);
+    else loose = loose.concat(members.filter(b=>set.has(b)));
+  });
+  if(loose.length<=2) parts.push(...loose);
+  else parts.push(loose.length+' brokers');
+  return parts.join(', ');
+}
+function initBrokerTree(){
+  buildBrokerHierarchy();
+  renderBrokerTreePanel();
+  const container = $('#mselBroker');
+  if(!container || container.dataset.wired) return;
+  container.dataset.wired = '1';
+  const btn = container.querySelector('.msel-btn');
+  const panel = container.querySelector('.msel-panel');
+  const allCb = container.querySelector('.msel-all-cb');
+  const optionsEl = container.querySelector('.dtree-options');
+
+  btn.addEventListener('click', e=>{
+    e.stopPropagation();
+    const willOpen = panel.classList.contains('hide');
+    document.querySelectorAll('.msel-panel').forEach(p=>p.classList.add('hide'));
+    document.querySelectorAll('.msel').forEach(m=>m.classList.remove('open'));
+    if(willOpen){ panel.classList.remove('hide'); container.classList.add('open'); renderBrokerTreePanel(); }
+  });
+  allCb.addEventListener('click', ()=>{
+    state.broker = allCb.checked ? null : [];
+    renderBrokerTreePanel();
+    renderAll();
+  });
+  optionsEl.addEventListener('click', e=>{
+    const toggle = e.target.closest('.dtree-toggle');
+    if(toggle && !toggle.classList.contains('leaf')){
+      const key = toggle.dataset.treeKey;
+      if(brokerTreeExpanded.has(key)) brokerTreeExpanded.delete(key); else brokerTreeExpanded.add(key);
+      document.getElementById(toggle.dataset.childrenId).classList.toggle('hide');
+      toggle.textContent = brokerTreeExpanded.has(key) ? '▾' : '▸';
+      return;
+    }
+    const cb = e.target.closest('input[type="checkbox"]');
+    if(!cb) return;
+    const level = cb.dataset.level, value = cb.dataset.value;
+    const currentSet = new Set(state.broker===null ? brokerTreeData.allBrokers : state.broker);
+    const affected = level==='group' ? brokerTreeData.tree[value] : [value];
+    const allIn = affected.every(b=>currentSet.has(b));
+    if(allIn) affected.forEach(b=>currentSet.delete(b)); else affected.forEach(b=>currentSet.add(b));
+    const newArr = brokerTreeData.allBrokers.filter(b=>currentSet.has(b));
+    state.broker = (newArr.length===brokerTreeData.allBrokers.length) ? null : newArr;
+    renderBrokerTreePanel();
+    renderAll();
+  });
+  panel.addEventListener('click', e=>e.stopPropagation());
+}
+function renderBrokerTreePanel(){
+  const container = $('#mselBroker');
+  if(!container) return;
+  const optionsEl = container.querySelector('.dtree-options');
+  const allCb = container.querySelector('.msel-all-cb');
+  const btnLabel = container.querySelector('.msel-btn-label');
+  const sel = state.broker;
+  const selSet = sel===null ? null : new Set(sel);
+  const isChecked = b => selSet===null || selSet.has(b);
+  let html = '';
+  brokerTreeData.groupOrder.forEach(g=>{
+    const members = brokerTreeData.tree[g];
+    const n = members.filter(isChecked).length;
+    const gChecked = n===members.length, gIndet = n>0 && n<members.length;
+    const expanded = brokerTreeExpanded.has(g);
+    const childrenId = 'btg_'+g.replace(/[^a-zA-Z0-9]/g,'');
+    html += `<div class="dtree-q"><div class="dtree-row">
+        <span class="dtree-toggle" data-children-id="${childrenId}" data-tree-key="${g}">${expanded?'▾':'▸'}</span>
+        <label class="dtree-label"><input type="checkbox" data-level="group" data-value="${g}" ${gChecked?'checked':''}${gIndet?' data-indet="1"':''}><span><span class="kpi-group-dot" style="background:${groupColor(g)};display:inline-block;margin-right:6px;vertical-align:middle"></span>${g}</span></label>
+      </div>
+      <div class="dtree-children dtree-children-m ${expanded?'':'hide'}" id="${childrenId}">`;
+    members.forEach(b=>{
+      html += `<div class="dtree-w"><div class="dtree-row">
+          <span class="dtree-toggle leaf">▸</span>
+          <label class="dtree-label"><input type="checkbox" data-level="broker" data-value="${b.replace(/"/g,'&quot;')}" ${isChecked(b)?'checked':''}><span><span class="kpi-group-dot" style="background:${brokerColor(b)};display:inline-block;margin-right:6px;vertical-align:middle"></span>${b}</span></label>
+        </div></div>`;
+    });
+    html += `</div></div>`;
+  });
+  optionsEl.innerHTML = html || `<div class="msel-empty">No data</div>`;
+  optionsEl.querySelectorAll('input[data-indet="1"]').forEach(cb=>{ cb.indeterminate = true; });
+  const total = brokerTreeData.allBrokers.length;
+  allCb.checked = sel===null;
+  allCb.indeterminate = sel!==null && sel.length>0 && sel.length<total;
+  btnLabel.textContent = describeBrokerSel();
 }
 
 /* ================= DATE TREE FILTER (Quarter > Month > Week Ending) ================= */
@@ -1512,18 +1635,22 @@ function renderDateTreePanel(){
       const mKey = q+'|'+m;
       const mExpanded = dateTreeExpanded.months.has(mKey);
       const mChildrenId = 'dtm_'+mKey.replace(/[^a-zA-Z0-9]/g,'');
+      const monthly = granularity==='month';
       html += `<div class="dtree-m"><div class="dtree-row">
-          <span class="dtree-toggle" data-children-id="${mChildrenId}" data-tree-level="month" data-tree-key="${mKey.replace(/"/g,'&quot;')}">${mExpanded?'▾':'▸'}</span>
+          <span class="dtree-toggle${monthly?' leaf':''}" data-children-id="${mChildrenId}" data-tree-level="month" data-tree-key="${mKey.replace(/"/g,'&quot;')}">${(!monthly && mExpanded)?'▾':'▸'}</span>
           <label class="dtree-label"><input type="checkbox" data-level="month" data-value="${mKey.replace(/"/g,'&quot;')}" ${mChecked?'checked':''}${mIndet?' data-indet="1"':''}><span>${m}</span></label>
-        </div>
-        <div class="dtree-children dtree-children-w ${mExpanded?'':'hide'}" id="${mChildrenId}">`;
-      mWeeks.forEach(w=>{
-        html += `<div class="dtree-w"><div class="dtree-row">
-            <span class="dtree-toggle leaf">▸</span>
-            <label class="dtree-label"><input type="checkbox" data-level="week" data-value="${w.replace(/"/g,'&quot;')}" ${isWeekChecked(w)?'checked':''}><span>${w}</span></label>
-          </div></div>`;
-      });
-      html += `</div></div>`;
+        </div>`;
+      if(!monthly){
+        html += `<div class="dtree-children dtree-children-w ${mExpanded?'':'hide'}" id="${mChildrenId}">`;
+        mWeeks.forEach(w=>{
+          html += `<div class="dtree-w"><div class="dtree-row">
+              <span class="dtree-toggle leaf">▸</span>
+              <label class="dtree-label"><input type="checkbox" data-level="week" data-value="${w.replace(/"/g,'&quot;')}" ${isWeekChecked(w)?'checked':''}><span>${w}</span></label>
+            </div></div>`;
+        });
+        html += `</div>`;
+      }
+      html += `</div>`;
     });
     html += `</div></div>`;
   });
@@ -1535,6 +1662,14 @@ function renderDateTreePanel(){
   allCb.indeterminate = sel!==null && sel.length>0 && sel.length<totalWeeks;
   if(sel===null || sel.length===totalWeeks) btnLabel.textContent = 'All';
   else if(sel.length===0) btnLabel.textContent = 'None';
+  else if(granularity==='month'){
+    // count months that are fully or partly selected
+    const months = [];
+    dateTreeData.quarterOrder.forEach(q=>dateTreeData.tree[q].monthOrder.forEach(m=>{
+      if(dateTreeData.tree[q].months[m].some(isWeekChecked)) months.push(m);
+    }));
+    btnLabel.textContent = months.length===1 ? months[0] : months.length+' months selected';
+  }
   else if(sel.length===1) btnLabel.textContent = sel[0];
   else btnLabel.textContent = sel.length+' weeks selected';
 }
@@ -1624,12 +1759,22 @@ document.addEventListener('click', ()=>{
 });
 
 /* ================= FILTERING ================= */
+/* Groups currently "in scope" = every group that has at least one selected
+   broker. Lets a view ignore the individual-broker selection but still stay
+   within the selected groups (e.g. the Scorecard table lists every broker in
+   whichever groups are checked, not just the checked brokers). */
+function selectedGroups(){
+  if(state.broker===null) return null;
+  const set = new Set(state.broker.map(b=>brokerGroupOf(b)));
+  return Array.from(set);
+}
 function filteredRows({useBroker=true, useWeekEnding=true, useRegion=true, useCust=true, useGroup=true}={}){
+  const grps = (!useBroker && useGroup) ? selectedGroups() : null;
   return DATA.rows.filter(r=>{
     if(useCust && state.cust!==null && !state.cust.includes(DATA.custs[r[R.cu]])) return false;
     if(useBroker && state.broker!==null && !state.broker.includes(DATA.brokers[r[R.br]])) return false;
+    if(grps!==null && !grps.includes(DATA.groups[r[R.grp]])) return false;
     if(useRegion && state.region!==null && !state.region.includes(DATA.regions[r[R.rg]])) return false;
-    if(useGroup && state.group!==null && !state.group.includes(DATA.groups[r[R.grp]])) return false;
     if(useWeekEnding && state.weekEnding!==null && !state.weekEnding.includes(weCache[r[R.wk]])) return false;
     return true;
   });
@@ -1757,7 +1902,7 @@ function slopeBadge(el, trend, higherIsBetter=true, title=''){
   const cls = Math.abs(pctPerWeek)<0.3 ? 'flat' : (good?'up':'down');
   const arrow = Math.abs(pctPerWeek)<0.3 ? '→' : (pctPerWeek>=0?'▲':'▼');
   el.className = 'kpi-delta '+cls;
-  el.innerHTML = `${arrow}${Math.abs(pctPerWeek).toFixed(1)}%/wk`;
+  el.innerHTML = `${arrow}${Math.abs(pctPerWeek).toFixed(1)}%/${periodAbbr()}`;
   if(title) el.title = title; else el.removeAttribute('title');
 }
 /* The most recent week in the dataset is very likely a partial export
@@ -1788,7 +1933,7 @@ function linTrend(values){
 function pickPeriodChange(periodSeries){
   let series = periodSeries;
   let partialWeek = null, partialSkipped = false;
-  if(series.length && series[series.length-1].wk===mostRecentWeekInData && series.length>=3){
+  if(series.length && isPartialPeriod(series[series.length-1].wk) && series.length>=3){
     partialWeek = series[series.length-1];
     series = series.slice(0,-1);
     partialSkipped = true;
@@ -1800,11 +1945,42 @@ function pickPeriodChange(periodSeries){
   return { trend, weeksSpan: series.length, partialSkipped, partialWeek };
 }
 
+/* ================= TIME GRANULARITY (weekly / monthly) ================= */
+/* One switch that changes how every time-series chart, sparkline and trend
+   badge buckets its data. Not a filter — it never changes WHICH rows are in
+   scope, only how they're grouped along the x-axis. The Date tree collapses
+   its Week Ending level in monthly mode so the picker matches the charts. */
+let granularity = 'week';
+const WEEKS_PER_MONTH = 52/12;
+/* Bucket key for a row's week: the Saturday date itself in weekly mode, or
+   YYYY-MM in monthly mode (same month rule as monthCache — the Saturday's
+   month — so the picker and the charts agree on where a week lands). */
+function periodKey(wk){ return granularity==='month' ? wk.slice(0,7) : wk; }
+function periodLabel(key){
+  if(granularity==='month'){ const d = parseDate(key+'-15'); return d.toLocaleDateString('en-US',{month:'short',year:'numeric'}); }
+  return weCache[key] || key;
+}
+function periodNoun(plural){ return granularity==='month' ? (plural?'months':'month') : (plural?'weeks':'week'); }
+function periodAbbr(){ return granularity==='month' ? 'mo' : 'wk'; }
+/* The last bucket is "partial" when it contains the most recent week in the
+   data and — for a month — that week isn't the month's final week. */
+function isPartialPeriod(key){
+  if(!mostRecentWeekInData) return false;
+  if(granularity!=='month') return key===mostRecentWeekInData;
+  if(key!==periodKey(mostRecentWeekInData)) return false;
+  const sat = parseDate(mostRecentWeekInData);
+  const monthEnd = new Date(sat.getFullYear(), sat.getMonth()+1, 0);
+  return (monthEnd - sat)/86400000 >= 7; // at least one more full week fits in the month
+}
+
 /* ================= AGGREGATION HELPERS ================= */
+/* Series bucketed by the current granularity. The bucket key lives in `.wk`
+   for historical reasons (it was always a week); use periodLabel(s.wk) to
+   display it. */
 function weeklySeries(rows){
   const map = {};
   rows.forEach(r=>{
-    const wk = r[R.wk];
+    const wk = periodKey(r[R.wk]);
     if(!map[wk]) map[wk] = {wk, n:0, rev:0, cost:0, margin:0, corpMargin:0};
     const o = map[wk];
     o.n++; o.rev+=r[R.rev]; o.cost+=r[R.cost]; o.margin+=r[R.mgn]; o.corpMargin+=(r[R.cmgn]!==undefined?r[R.cmgn]:r[R.mgn]);
@@ -1847,7 +2023,7 @@ function renderKpiCards(sfx){
   // Corporate margin by group — deliberately ignores the Group filter so all
   // three groups are always listed side by side, highest corporate margin %
   // first. (Everything else on the tab respects the Group filter.)
-  const grpRows = filteredRows({useGroup:false});
+  const grpRows = filteredRows({useBroker:false, useGroup:false});
   const byGrp = {};
   grpRows.forEach(r=>{
     const g = DATA.groups[r[R.grp]];
@@ -1892,11 +2068,11 @@ function renderKpiCards(sfx){
         trend[f] = { start:prevWk[f], end:currWk[f], slope: currWk[f]-prevWk[f], mean:(currWk[f]+prevWk[f])/2 };
       });
       period = { trend, weeksSpan:1, partialSkipped:false,
-        partialWeek: currWk.wk===mostRecentWeekInData ? currWk : null, singleWeekFallback:true };
+        partialWeek: isPartialPeriod(currWk.wk) ? currWk : null, singleWeekFallback:true };
     }
   }
   if(period){
-    const title = period.singleWeekFallback ? 'Change vs the prior week' : `Average weekly rate of change, trend over ${period.weeksSpan} wks`;
+    const title = period.singleWeekFallback ? `Change vs the prior ${periodNoun(false)}` : `Average ${granularity==='month'?'monthly':'weekly'} rate of change, trend over ${period.weeksSpan} ${periodNoun(true)}`;
     slopeBadge(el('kShipD'), period.trend.n, true, title);
     slopeBadge(el('kRevD'), period.trend.rev, true, title);
     slopeBadge(el('kMarginFullD'), period.trend.margin, true, title);
@@ -1916,8 +2092,7 @@ function renderOverview(){
   const scopeParts = [];
   const describeSel = (sel, displayFn) => sel.length<=2 ? sel.map(displayFn||(x=>x)).join(', ') : sel.length+' selected';
   if(state.cust!==null) scopeParts.push('Customer: '+describeSel(state.cust, titleCaseName));
-  if(state.broker!==null) scopeParts.push('Broker: '+describeSel(state.broker));
-  if(state.group!==null) scopeParts.push('Group: '+describeSel(state.group));
+  if(state.broker!==null) scopeParts.push('Broker: '+describeBrokerSel());
   if(state.region!==null) scopeParts.push('Region: '+describeSel(state.region));
   if(state.weekEnding!==null) scopeParts.push('Date: '+describeSel(state.weekEnding));
   $('#scopeNote').textContent = scopeParts.length ? 'Filtered — '+scopeParts.join(' · ') : 'Showing all data, non-agent brokers';
@@ -1929,7 +2104,7 @@ function renderOverview(){
   $('#trendNote').textContent = visSeries.length + ' weeks shown';
 
   mkChart('chMarginWeekly', {
-    data:{ labels: visSeries.map(s=>weCache[s.wk]),
+    data:{ labels: visSeries.map(s=>periodLabel(s.wk)),
       datasets:[
         {type:'bar',label:'Margin $',data:visSeries.map(s=>Math.round(s.margin)),backgroundColor:'rgba(111,207,151,.55)',borderRadius:4,yAxisID:'y',order:2},
         {type:'line',label:'Margin %',data:visSeries.map(s=>+(s.marginPct*100).toFixed(1)),borderColor:'#EFEFEF',pointRadius:2,pointBackgroundColor:'#D9A521',borderWidth:2,tension:.3,yAxisID:'y1',order:1}
@@ -1945,7 +2120,7 @@ function renderOverview(){
 
   mkChart('chRevCostWeekly', {
     type:'line',
-    data:{ labels: visSeries.map(s=>weCache[s.wk]),
+    data:{ labels: visSeries.map(s=>periodLabel(s.wk)),
       datasets:[
         {label:'Customer Revenue',data:visSeries.map(s=>Math.round(s.rev)),borderColor:'#D9A521',backgroundColor:'rgba(217,165,33,.12)',fill:true,borderWidth:2,pointRadius:2,tension:.3},
         {label:'Carrier Cost',data:visSeries.map(s=>Math.round(s.cost)),borderColor:'#A6A6AD',backgroundColor:'rgba(166,166,173,.10)',fill:true,borderWidth:2,pointRadius:2,tension:.3}
@@ -1964,11 +2139,13 @@ function renderOverview(){
   const brokerWeekCounts = {};
   const brokersInVolScope = [];
   trendRows.forEach(r=>{
-    const wk = r[R.wk], b = DATA.brokers[r[R.br]];
+    const wk = periodKey(r[R.wk]), b = DATA.brokers[r[R.br]];
     if(!brokersInVolScope.includes(b)) brokersInVolScope.push(b);
     const key = wk+'|'+b;
     brokerWeekCounts[key] = (brokerWeekCounts[key]||0) + 1;
   });
+  // 250/week target, scaled to a monthly equivalent when bucketing by month
+  const volTarget = granularity==='month' ? Math.round(250*WEEKS_PER_MONTH) : 250;
   const volDatasets = brokersInVolScope.map(b=>({
     label:b,
     data: visSeries.map(s=> brokerWeekCounts[s.wk+'|'+b] || 0),
@@ -1977,14 +2154,14 @@ function renderOverview(){
   }));
   mkChart('chVolByBroker', {
     type:'bar',
-    data:{labels:visSeries.map(s=>weCache[s.wk]), datasets:volDatasets},
+    data:{labels:visSeries.map(s=>periodLabel(s.wk)), datasets:volDatasets},
     plugins:[ChartDataLabels],
     options:{responsive:true,maintainAspectRatio:false,
       plugins:{tooltip:tt,legend:{labels:{boxWidth:12,boxHeight:12}},
         datalabels:{color:'#0B0B0C',font:{weight:'700',size:9},formatter:v=>v>0?v:'',
           display:ctx=>ctx.dataset.data[ctx.dataIndex]>4},
-        annotation:{annotations:{target250:{type:'line',yMin:250,yMax:250,borderColor:'#F27281',borderWidth:2,borderDash:[6,4],
-          label:{content:'Target: 250',display:true,position:'end',backgroundColor:'rgba(186,15,36,.85)',color:'#EFEFEF',
+        annotation:{annotations:{target250:{type:'line',yMin:volTarget,yMax:volTarget,borderColor:'#F27281',borderWidth:2,borderDash:[6,4],
+          label:{content:'Target: '+fmtNum(volTarget)+(granularity==='month'?' (250/wk)':''),display:true,position:'end',backgroundColor:'rgba(186,15,36,.85)',color:'#EFEFEF',
             font:{weight:'700',size:10},padding:{top:3,bottom:3,left:6,right:6}}}}}},
       layout:{padding:{top:18}},
       scales:{
@@ -1995,12 +2172,14 @@ function renderOverview(){
 
   // Trend note flags the partial trailing week so it isn't misread as a real drop-off,
   // and states what basis the badges above are on (since the badge text itself is kept short)
-  const basisTxt = period ? (period.singleWeekFallback ? 'badges show change vs. prior week' : `badges show avg %/wk trend over ${period.weeksSpan} wks`) : '';
+  const pn = periodNoun(true), pa = periodAbbr();
+  const basisTxt = period ? (period.singleWeekFallback ? `badges show change vs. prior ${periodNoun(false)}` : `badges show avg %/${pa} trend over ${period.weeksSpan} ${pn}`) : '';
   if(period && period.partialWeek){
     const skippedTxt = period.partialSkipped ? ', excluded from the comparison above' : ' — treat its totals as incomplete';
-    $('#trendNote').textContent = `${visSeries.length} weeks shown — week ending ${weCache[period.partialWeek.wk]} is still accruing shipments${skippedTxt}`;
+    const which = granularity==='month' ? periodLabel(period.partialWeek.wk) : 'week ending '+periodLabel(period.partialWeek.wk);
+    $('#trendNote').textContent = `${visSeries.length} ${pn} shown — ${which} is still accruing shipments${skippedTxt}`;
   } else {
-    $('#trendNote').textContent = `${visSeries.length} weeks shown${basisTxt?' · '+basisTxt:''}`;
+    $('#trendNote').textContent = `${visSeries.length} ${pn} shown${basisTxt?' · '+basisTxt:''}`;
   }
 
   // broker mix donut (loads) — respects all filters including broker (shows what's left)
@@ -2187,7 +2366,7 @@ function renderScorecard(){
   const byWeekBroker = {};
   const weeksSet = new Set();
   trendRows.forEach(r=>{
-    const wk = r[R.wk], b = DATA.brokers[r[R.br]];
+    const wk = periodKey(r[R.wk]), b = DATA.brokers[r[R.br]];
     weeksSet.add(wk);
     const key = wk+'|'+b;
     if(!byWeekBroker[key]) byWeekBroker[key] = {n:0, rev:0, margin:0, kpis:[]};
@@ -2209,7 +2388,7 @@ function renderScorecard(){
   }));
   mkChart('chMarginTrend', {
     type:'line',
-    data:{labels:trendWeeks.map(w=>weCache[w]), datasets:kpiDatasets},
+    data:{labels:trendWeeks.map(w=>periodLabel(w)), datasets:kpiDatasets},
     options:{responsive:true,maintainAspectRatio:false,
       plugins:{tooltip:tt,legend:{labels:{boxWidth:12,boxHeight:12}},
         annotation:{annotations:{zeroLine:{type:'line',yMin:0,yMax:0,borderColor:'#F27281',borderWidth:2,borderDash:[6,4]}}}},
@@ -2234,7 +2413,7 @@ function renderScorecard(){
     stack:'vol', borderRadius:2, yAxisID:'y1', order:2
   }));
   mkChart('chMarginDollarTrend', {
-    data:{labels:trendWeeks.map(w=>weCache[w]), datasets:[...trendDollarDatasets, ...trendVolumeDatasets]},
+    data:{labels:trendWeeks.map(w=>periodLabel(w)), datasets:[...trendDollarDatasets, ...trendVolumeDatasets]},
     options:{responsive:true,maintainAspectRatio:false,plugins:{tooltip:tt,legend:{labels:{boxWidth:12,boxHeight:12,filter:item=>item.text.includes('Margin $')}}},
       scales:{
         x:{ticks:{maxRotation:45,autoSkip:true,maxTicksLimit:20}},
@@ -2577,7 +2756,7 @@ function renderCarriers(){
   const scopeRows = filteredRows({useWeekEnding:false});
   const byWeek = {};
   scopeRows.forEach(r=>{
-    const wk = r[R.wk], c = DATA.carriers[r[R.ca]];
+    const wk = periodKey(r[R.wk]), c = DATA.carriers[r[R.ca]];
     if(!byWeek[wk]) byWeek[wk] = new Set();
     byWeek[wk].add(c);
   });
@@ -2587,7 +2766,7 @@ function renderCarriers(){
   weeks.forEach(wk=>{
     let newCt=0, repCt=0;
     byWeek[wk].forEach(c=>{
-      const isNew = !BASELINE.has(c) && carrierFirstWeek[c]===wk;
+      const isNew = !BASELINE.has(c) && periodKey(carrierFirstWeek[c])===wk;
       if(isNew) newCt++; else repCt++;
     });
     newCounts.push(newCt); repeatCounts.push(repCt);
@@ -2597,7 +2776,9 @@ function renderCarriers(){
 
   // Show the full history rather than a trailing 16-week window, so onboarding
   // trends aren't cut off partway through the data.
-  const wkLabels = weeks.map(w=>weCache[w]);
+  const wkLabels = weeks.map(w=>periodLabel(w));
+  const newTarget = granularity==='month' ? Math.round(25*WEEKS_PER_MONTH) : 25;
+  const ncTitle = $('#newCarriersTitle'); if(ncTitle) ncTitle.textContent = `New carriers added per ${periodNoun(false)}`;
   mkChart('chNewCarriers', {
     type:'bar',
     data:{labels:wkLabels, datasets:[{label:'New carriers', data:newCounts, backgroundColor:'rgba(217,165,33,.6)', borderRadius:4}]},
@@ -2605,8 +2786,8 @@ function renderCarriers(){
     options:{responsive:true,maintainAspectRatio:false,plugins:{tooltip:tt,legend:{display:false},
       datalabels:{color:'#EFEFEF',font:{weight:'700',size:10},anchor:'end',align:'end',offset:2,clip:false,
         formatter:v=>v>0?v:'',display:ctx=>ctx.dataset.data[ctx.dataIndex]>0},
-      annotation:{annotations:{target25:{type:'line',yMin:25,yMax:25,borderColor:'#F27281',borderWidth:2,borderDash:[6,4],
-        label:{content:'Target: 25',display:true,position:'end',backgroundColor:'rgba(186,15,36,.85)',color:'#EFEFEF',
+      annotation:{annotations:{target25:{type:'line',yMin:newTarget,yMax:newTarget,borderColor:'#F27281',borderWidth:2,borderDash:[6,4],
+        label:{content:'Target: '+newTarget+(granularity==='month'?' (25/wk)':''),display:true,position:'end',backgroundColor:'rgba(186,15,36,.85)',color:'#EFEFEF',
           font:{weight:'700',size:10},padding:{top:3,bottom:3,left:6,right:6}}}}}},
       layout:{padding:{top:18}},
       scales:{x:{ticks:{maxRotation:45,autoSkip:true,maxTicksLimit:20}},y:{ticks:{precision:0}}}}
@@ -3000,10 +3181,18 @@ function renderAll(){
   renderView(active);
 }
 
+$('#granToggle').addEventListener('click', e=>{
+  const b = e.target.closest('.seg-btn'); if(!b || b.dataset.gran===granularity) return;
+  granularity = b.dataset.gran;
+  document.querySelectorAll('#granToggle .seg-btn').forEach(x=>x.classList.toggle('active', x.dataset.gran===granularity));
+  renderDateTreePanel();
+  renderAll();
+});
 $('#resetBtn').addEventListener('click', ()=>{
-  state.cust=null; state.broker=null; state.region=null; state.weekEnding=null;
-  state.group = DATA ? ['NS Corporate'] : null;
-  ['mselCust','mselBroker','mselRegion','mselGroup'].forEach(id=>renderMultiSelectOptions(id));
+  state.cust=null; state.region=null; state.weekEnding=null;
+  state.broker = DATA ? DATA.brokers.filter(b=>brokerGroupOf(b)==='NS Corporate') : null;
+  ['mselCust','mselRegion'].forEach(id=>renderMultiSelectOptions(id));
+  renderBrokerTreePanel();
   renderDateTreePanel();
   renderAll();
 });
