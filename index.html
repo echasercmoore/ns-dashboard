@@ -437,7 +437,7 @@ tr.detail-row td{padding:0;border-bottom:1px solid rgba(46,46,51,.55)}
 
     <div class="grid row-2b mt">
       <div class="card">
-        <div class="card-h"><span class="eyebrow">Margin $ &amp; margin % — weekly</span><span class="card-note" id="trendNote"></span></div>
+        <div class="card-h"><span class="eyebrow">Margin &amp; corporate margin — $ and %</span><span class="card-note" id="trendNote"></span></div>
         <div class="chart-wrap tall"><canvas id="chMarginWeekly"></canvas></div>
       </div>
       <div class="card">
@@ -2107,7 +2107,9 @@ function renderOverview(){
     data:{ labels: visSeries.map(s=>periodLabel(s.wk)),
       datasets:[
         {type:'bar',label:'Margin $',data:visSeries.map(s=>Math.round(s.margin)),backgroundColor:'rgba(111,207,151,.55)',borderRadius:4,yAxisID:'y',order:2},
-        {type:'line',label:'Margin %',data:visSeries.map(s=>+(s.marginPct*100).toFixed(1)),borderColor:'#EFEFEF',pointRadius:2,pointBackgroundColor:'#D9A521',borderWidth:2,tension:.3,yAxisID:'y1',order:1}
+        {type:'bar',label:'Corporate Margin $',data:visSeries.map(s=>Math.round(s.corpMargin)),backgroundColor:'rgba(217,165,33,.6)',borderRadius:4,yAxisID:'y',order:2},
+        {type:'line',label:'Margin %',data:visSeries.map(s=>+(s.marginPct*100).toFixed(1)),borderColor:'#EFEFEF',pointRadius:2,pointBackgroundColor:'#6FCF97',borderWidth:2,tension:.3,yAxisID:'y1',order:1},
+        {type:'line',label:'Corporate Margin %',data:visSeries.map(s=>+(s.corpMarginPct*100).toFixed(1)),borderColor:'#D9A521',borderDash:[5,4],pointRadius:2,pointBackgroundColor:'#D9A521',borderWidth:2,tension:.3,yAxisID:'y1',order:1}
       ]},
     options:{responsive:true,maintainAspectRatio:false,
       plugins:{tooltip:tt,legend:{labels:{boxWidth:12,boxHeight:12}}},
