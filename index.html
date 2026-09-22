@@ -878,6 +878,24 @@ function exportRawRows(rows, filenamePrefix){
    Specific names that need a full rename or custom casing (e.g. real
    initialisms the general algorithm can't infer) are listed explicitly here
    — add more as needed, keyed by the exact original value from the sheet. */
+/* Customers that appear under more than one name in the source data and
+   should be one customer everywhere (tables, filters, drill-downs, exports).
+   Applied at ingestion, before anything is aggregated. Keys are matched
+   case-insensitively; the value is the raw name to fold them into (which
+   then goes through the display overrides below — so BTB still shows as
+   "Primo"). Add pairs here as more come up. */
+const CUSTOMER_MERGE = {
+  'BLUETRITON BRANDS': 'BTB',
+  'BLUE TRITON BRANDS': 'BTB',
+  'BLUETRITON': 'BTB',
+  'PRIMO': 'BTB',
+  'PRIMO BRANDS': 'BTB',
+  'PRIMO WATER': 'BTB'
+};
+function normalizeCustomer(raw){
+  const name = (raw||'Unknown').trim();
+  return CUSTOMER_MERGE[name.toUpperCase()] || name;
+}
 const CUSTOMER_NAME_OVERRIDES = {
   'BTB': 'Primo',
   'CCNE': 'Coke',
@@ -1149,7 +1167,7 @@ function buildDataFromSheetRows(rawRows, tflRawRows, regionMap){
       if(destState && regionMap[destState]) regionMapHits++; else regionMapMisses++;
     }
     const rg = enc(regions, regionVal);
-    const cu = enc(custs, (row['Customer Clean']||'Unknown').trim());
+    const cu = enc(custs, normalizeCustomer(row['Customer Clean']));
     const ln = enc(lanes, (row['Lane']||'').trim());
     const ca = enc(carriers, (row['Carrier']||'Unknown').trim());
     const miles = toMiles(row['Miles']);
@@ -1206,7 +1224,7 @@ function buildDataFromSheetRows(rawRows, tflRawRows, regionMap){
       if(destState && regionMap[destState]) regionMapHits++; else regionMapMisses++;
     }
     const rg = enc(regions, regionVal);
-    const cu = enc(custs, (row['Customer']||'Unknown').trim());
+    const cu = enc(custs, normalizeCustomer(row['Customer']));
     const laneStr = `${(row['Origin']||'').trim()}, ${(row['O ST']||'').trim()} → ${(row['Dest']||'').trim()}, ${(row['D ST']||'').trim()}`;
     const ln = enc(lanes, laneStr);
     const ca = enc(carriers, (row['Carrier']||'Unknown').trim());
